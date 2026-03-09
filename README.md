@@ -114,7 +114,7 @@ cargo build --release
 
 Requires:
 - Rust 2021 edition
-- Python 3.8+ (for PyO3 plugin embedding)
+- Python 3.9–3.13 (for PyO3 plugin embedding; 3.14 not yet supported — see [PyO3#4584](https://github.com/PyO3/pyo3/issues/4584))
 - `pkg-config` and Python development headers (`python3-dev` / `python3-devel`)
 
 ## Running
