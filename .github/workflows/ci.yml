@@ -84,11 +84,10 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build
+        env:
+          PYO3_CROSS_PYTHON_VERSION: "3.13"
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
-            # cross runs inside a Docker container that doesn't have Python.
-            # Tell PyO3 to skip interpreter detection and use the version directly.
-            export PYO3_CROSS_PYTHON_VERSION=3.13
             cross build --release --target ${{ matrix.target }}
           else
             cargo build --release --target ${{ matrix.target }}
