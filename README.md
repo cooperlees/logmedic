@@ -4,12 +4,12 @@ A Rust daemon that automatically detects high-frequency log errors and remediate
 
 ## The Log Medic's Mantra
 
-**C**ontext is king; find the timestamp and the trace.
-**O**pen the config to see what’s out of place.
-**O**utput streams filtered to find the root cause.
-**P**atch up the logic and pause for the flaws.
-**E**liminate bugs that the console displayed.
-**R**un it again once the fixes are made.
+- **C**ontext is king; find the timestamp and the trace.
+- **O**pen the config to see what’s out of place.
+- **O**utput streams filtered to find the root cause.
+- **P**atch up the logic and pause for the flaws.
+- **E**liminate bugs that the console displayed.
+- **R**un it again once the fixes are made.
 
 ## What it does
 
