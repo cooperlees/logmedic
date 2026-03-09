@@ -1,0 +1,34 @@
+# logmedic configuration
+
+[daemon]
+poll_interval_secs = 300   # 5 minutes
+frequency_threshold = 50   # min occurrences to flag
+lookback = "1h"
+
+# --- Detector plugins ---
+
+[[plugins]]
+name = "loki"
+kind = "python"
+path = "plugins/loki_detector/loki_detector.py"
+
+[plugins.settings]
+loki_url = "http://localhost:3100"
+# org_id = "tenant-1"
+# extra_labels = '{namespace="production"}'
+# query = '{app="myservice"} |= "error"'
+
+# --- Remediator plugins ---
+
+[[remediators]]
+name = "claude"
+kind = "ai"
+
+[remediators.settings]
+path = "plugins/claude_remediator/claude_remediator.py"
+# anthropic_api_key = ""  # or set ANTHROPIC_API_KEY env var
+model = "claude-sonnet-4-20250514"
+# default_repo = "myorg/infra-ansible"
+# auto_execute = false
+# ssh_key_path = "~/.ssh/id_ed25519"
+# system_prompt = "Our infra uses Ansible for config management. Services run on k8s in AWS."
