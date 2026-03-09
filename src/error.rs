@@ -56,6 +56,7 @@ pub enum PluginError {
     },
 
     // ── Python plugin errors ────────────────────────────────────────
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': failed to import module '{module}'\n\
          hint: check that '{path}' exists and has no syntax errors. \
@@ -69,6 +70,7 @@ pub enum PluginError {
         detail: String,
     },
 
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': module '{module}' is missing class '{class}'\n\
          hint: your plugin must define `class {class}` with __init__(self, settings: dict)\n\
@@ -81,6 +83,7 @@ pub enum PluginError {
         detail: String,
     },
 
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': error calling '{method}' on '{class}'\n\
          hint: check the method signature and return type. \
@@ -95,6 +98,7 @@ pub enum PluginError {
         detail: String,
     },
 
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': failed to convert return value from '{method}'\n\
          hint: '{method}' must return {expected_type}\n\
@@ -107,6 +111,7 @@ pub enum PluginError {
         detail: String,
     },
 
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': anomaly dict at index {index} is missing required key '{key}'\n\
          hint: each dict in the list returned by detect() must have 'pattern' (str) and 'count' (int)"
@@ -117,6 +122,7 @@ pub enum PluginError {
         key: String,
     },
 
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': failed to parse remediator response as JSON: {source}\n\
          hint: propose() must return a JSON string (str), got something else"
@@ -126,11 +132,19 @@ pub enum PluginError {
         source: serde_json::Error,
     },
 
+    #[cfg(feature = "python")]
     #[error(
         "python plugin '{name}': failed to access Python sys.path: {detail}\n\
          hint: this is usually a PyO3 initialization issue"
     )]
     PythonSysPathError { name: String, detail: String },
+
+    #[cfg(not(feature = "python"))]
+    #[error(
+        "plugin '{name}': Python plugin support is not enabled\n\
+         hint: rebuild logmedic with `cargo build --features python`"
+    )]
+    PythonNotEnabled { name: String },
 
     // ── Config / general errors ─────────────────────────────────────
     #[error(
@@ -145,6 +159,7 @@ pub enum PluginError {
         source: serde_json::Error,
     },
 
+    #[cfg_attr(not(feature = "python"), allow(dead_code))]
     #[error("plugin '{name}': background task panicked or was cancelled: {source}")]
     TaskJoinError {
         name: String,
