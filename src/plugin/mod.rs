@@ -1,4 +1,5 @@
 mod native;
+#[cfg(feature = "python")]
 mod python;
 
 use tracing::info;
@@ -15,7 +16,14 @@ pub fn load_detectors(configs: &[PluginConfig]) -> Result<Vec<Box<dyn Detector>>
         info!(plugin = %cfg.name, kind = ?cfg.kind, "loading detector plugin");
         let detector: Box<dyn Detector> = match cfg.kind {
             PluginKind::Native => native::load_native_detector(cfg)?,
+            #[cfg(feature = "python")]
             PluginKind::Python => python::load_python_detector(cfg)?,
+            #[cfg(not(feature = "python"))]
+            PluginKind::Python => {
+                return Err(PluginError::PythonNotEnabled {
+                    name: cfg.name.clone(),
+                })
+            }
         };
         detectors.push(detector);
     }
@@ -30,7 +38,14 @@ pub fn load_remediators(
     for cfg in configs {
         info!(remediator = %cfg.name, kind = ?cfg.kind, "loading remediator");
         let remediator: Box<dyn Remediator> = match cfg.kind {
+            #[cfg(feature = "python")]
             RemediatorKind::Ai => python::load_python_remediator(cfg)?,
+            #[cfg(not(feature = "python"))]
+            RemediatorKind::Ai => {
+                return Err(PluginError::PythonNotEnabled {
+                    name: cfg.name.clone(),
+                })
+            }
             RemediatorKind::Script => native::load_native_remediator(cfg)?,
         };
         remediators.push(remediator);

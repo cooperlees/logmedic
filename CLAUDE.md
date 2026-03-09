@@ -5,15 +5,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-cargo build                        # Debug build (requires Python 3.13 + dev headers)
+cargo build                        # Debug build with Python support (default feature)
+cargo build --no-default-features  # Build without Python plugin support
 cargo build --release              # Optimized release build (strip, lto, codegen-units=1)
 cargo test --all-features          # Run all tests
+cargo test --no-default-features   # Test without Python
 cargo clippy --all-targets --all-features  # Lint (CI treats warnings as errors via RUSTFLAGS="-D warnings")
 cargo fmt --all --check            # Check formatting
 cargo fmt --all                    # Auto-format
 ```
 
-Python 3.13 must be installed with development headers (`python3-dev`). PyO3 0.22 does **not** support Python 3.14 yet ([PyO3#4584](https://github.com/PyO3/pyo3/issues/4584)). Set `PYO3_PYTHON=python3.13` if the system default differs. On Linux, the linker may need `LIBRARY_PATH` pointing to Python's lib directory.
+**Feature flags:** The `python` feature (default-enabled) controls PyO3 Python plugin embedding. Without it, only native `.so`/`.dylib` plugins work; configuring a Python plugin returns `PluginError::PythonNotEnabled`. Python-related error variants and `src/plugin/python.rs` are gated with `#[cfg(feature = "python")]`.
+
+When building with Python: Python 3.13 must be installed with development headers (`python3-dev`). PyO3 0.22 does **not** support Python 3.14 yet ([PyO3#4584](https://github.com/PyO3/pyo3/issues/4584)). Set `PYO3_PYTHON=python3.13` if the system default differs. On Linux, the linker may need `LIBRARY_PATH` pointing to Python's lib directory.
 
 ## Architecture
 
