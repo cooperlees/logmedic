@@ -1,5 +1,6 @@
 mod config;
 mod detect;
+mod error;
 mod metrics;
 mod plugin;
 mod remediate;
@@ -15,7 +16,11 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "logmedic=info".parse().unwrap()),
+                .unwrap_or_else(|_| {
+                    "logmedic=info"
+                        .parse()
+                        .expect("hard-coded log filter 'logmedic=info' should always parse")
+                }),
         )
         .init();
 
@@ -31,7 +36,7 @@ async fn main() -> anyhow::Result<()> {
     m.daemon_start_time.set(
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .expect("system clock is before UNIX epoch")
             .as_secs_f64(),
     );
 

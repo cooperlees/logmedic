@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::detect::LogAnomaly;
+use crate::error::PluginError;
 
 /// An action the remediator wants to take.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,11 +58,11 @@ pub trait Remediator: Send + Sync {
     async fn propose(
         &self,
         anomalies: &[LogAnomaly],
-    ) -> anyhow::Result<Vec<RemediationAction>>;
+    ) -> std::result::Result<Vec<RemediationAction>, PluginError>;
 
     /// Execute an approved action.
     async fn execute(
         &self,
         action: &RemediationAction,
-    ) -> anyhow::Result<ActionStatus>;
+    ) -> std::result::Result<ActionStatus, PluginError>;
 }

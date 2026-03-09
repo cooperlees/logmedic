@@ -1,15 +1,17 @@
 mod native;
 mod python;
 
-use anyhow::Result;
 use tracing::info;
 
 use crate::config::{PluginConfig, PluginKind, RemediatorConfig, RemediatorKind};
 use crate::detect::Detector;
+use crate::error::PluginError;
 use crate::remediate::Remediator;
 
 /// Loads all detector plugins from config.
-pub fn load_detectors(configs: &[PluginConfig]) -> Result<Vec<Box<dyn Detector>>> {
+pub fn load_detectors(
+    configs: &[PluginConfig],
+) -> Result<Vec<Box<dyn Detector>>, PluginError> {
     let mut detectors: Vec<Box<dyn Detector>> = Vec::new();
     for cfg in configs {
         info!(plugin = %cfg.name, kind = ?cfg.kind, "loading detector plugin");
@@ -23,7 +25,9 @@ pub fn load_detectors(configs: &[PluginConfig]) -> Result<Vec<Box<dyn Detector>>
 }
 
 /// Loads all remediator plugins from config.
-pub fn load_remediators(configs: &[RemediatorConfig]) -> Result<Vec<Box<dyn Remediator>>> {
+pub fn load_remediators(
+    configs: &[RemediatorConfig],
+) -> Result<Vec<Box<dyn Remediator>>, PluginError> {
     let mut remediators: Vec<Box<dyn Remediator>> = Vec::new();
     for cfg in configs {
         info!(remediator = %cfg.name, kind = ?cfg.kind, "loading remediator");

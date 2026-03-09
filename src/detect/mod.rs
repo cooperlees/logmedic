@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use crate::error::PluginError;
+
 /// A high-frequency log pattern detected by a plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogAnomaly {
@@ -37,5 +39,5 @@ pub trait Detector: Send + Sync {
         &self,
         lookback: &str,
         threshold: u64,
-    ) -> anyhow::Result<Vec<LogAnomaly>>;
+    ) -> std::result::Result<Vec<LogAnomaly>, PluginError>;
 }

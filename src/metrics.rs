@@ -47,13 +47,19 @@ impl Health {
     }
 
     pub fn set_expected(&self, detectors: usize, remediators: usize) {
-        let mut state = self.inner.write().unwrap();
+        let mut state = self
+            .inner
+            .write()
+            .expect("health state RwLock poisoned — a thread panicked while holding the lock");
         state.detectors_expected = detectors;
         state.remediators_expected = remediators;
     }
 
     pub fn set_loaded(&self, detectors: usize, remediators: usize) {
-        let mut state = self.inner.write().unwrap();
+        let mut state = self
+            .inner
+            .write()
+            .expect("health state RwLock poisoned — a thread panicked while holding the lock");
         state.detectors_loaded = detectors;
         state.remediators_loaded = remediators;
         state.ready = detectors == state.detectors_expected
@@ -61,7 +67,10 @@ impl Health {
     }
 
     fn check(&self) -> (bool, String) {
-        let state = self.inner.read().unwrap();
+        let state = self
+            .inner
+            .read()
+            .expect("health state RwLock poisoned — a thread panicked while holding the lock");
         let resp = HealthResponse {
             status: if state.ready { "healthy" } else { "unhealthy" },
             detectors: PluginHealth {
@@ -75,7 +84,9 @@ impl Health {
                 ok: state.remediators_loaded == state.remediators_expected,
             },
         };
-        (state.ready, serde_json::to_string_pretty(&resp).unwrap())
+        let body = serde_json::to_string_pretty(&resp)
+            .expect("HealthResponse serialization should never fail — all fields are simple types");
+        (state.ready, body)
     }
 }
 
@@ -114,7 +125,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new() -> Result<Self, prometheus::Error> {
         let registry = Registry::new();
 
         let detectors_loaded = IntGauge::new(
@@ -285,12 +296,14 @@ pub async fn serve_http(
                             let encoder = prometheus::TextEncoder::new();
                             let metric_families = registry.gather();
                             let mut buffer = Vec::new();
-                            encoder.encode(&metric_families, &mut buffer).unwrap();
+                            encoder
+                                .encode(&metric_families, &mut buffer)
+                                .expect("prometheus text encoding to an in-memory buffer should never fail");
                             Ok::<_, hyper::Error>(
                                 Response::builder()
                                     .header("Content-Type", encoder.format_type())
                                     .body(Full::new(Bytes::from(buffer)))
-                                    .unwrap(),
+                                    .expect("building a response with valid header and body should never fail"),
                             )
                         }
                         "/healthz" => {
@@ -300,12 +313,12 @@ pub async fn serve_http(
                                 .status(status)
                                 .header("Content-Type", "application/json")
                                 .body(Full::new(Bytes::from(body)))
-                                .unwrap())
+                                .expect("building a response with valid status and body should never fail"))
                         }
                         _ => Ok(Response::builder()
                             .status(404)
                             .body(Full::new(Bytes::from("Not Found")))
-                            .unwrap()),
+                            .expect("building a 404 response should never fail")),
                     }
                 }
             });

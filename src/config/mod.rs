@@ -1,6 +1,8 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use crate::error::Error;
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub daemon: DaemonConfig,
@@ -77,8 +79,14 @@ fn default_metrics_port() -> u16 {
     6969
 }
 
-pub fn load_config(path: &str) -> anyhow::Result<Config> {
-    let content = std::fs::read_to_string(path)?;
-    let config: Config = toml::from_str(&content)?;
+pub fn load_config(path: &str) -> std::result::Result<Config, Error> {
+    let content = std::fs::read_to_string(path).map_err(|e| Error::ConfigLoad {
+        path: path.to_string(),
+        source: Box::new(e),
+    })?;
+    let config: Config = toml::from_str(&content).map_err(|e| Error::ConfigParse {
+        path: path.to_string(),
+        source: e,
+    })?;
     Ok(config)
 }
