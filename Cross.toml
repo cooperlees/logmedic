@@ -1,2 +1,2 @@
 [build.env]
-passthrough = ["PYO3_CROSS_PYTHON_VERSION"]
+passthrough = ["PYO3_CROSS_PYTHON_VERSION", "PYO3_NO_PYTHON"]

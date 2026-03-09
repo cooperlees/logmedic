@@ -88,6 +88,9 @@ jobs:
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
+      - name: Set PyO3 no-python flag for cross compilation
+        if: matrix.cross
+        run: echo "PYO3_NO_PYTHON=1" >> $GITHUB_ENV
       - name: Build
         env:
           PYO3_CROSS_PYTHON_VERSION: "3.13"
