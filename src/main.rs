@@ -35,11 +35,16 @@ async fn main() -> anyhow::Result<()> {
             .as_secs_f64(),
     );
 
+    // Initialize health state
+    let health = metrics::Health::new();
+    health.set_expected(cfg.plugins.len(), cfg.remediators.len());
+
     let detectors = plugin::load_detectors(&cfg.plugins)?;
     let remediators = plugin::load_remediators(&cfg.remediators)?;
 
     m.detectors_loaded.set(detectors.len() as i64);
     m.remediators_loaded.set(remediators.len() as i64);
+    health.set_loaded(detectors.len(), remediators.len());
 
     info!(
         detectors = detectors.len(),
@@ -49,12 +54,13 @@ async fn main() -> anyhow::Result<()> {
         "daemon initialized"
     );
 
-    // Spawn metrics HTTP server
-    let metrics_addr: SocketAddr = ([0, 0, 0, 0], cfg.daemon.metrics_port).into();
+    // Spawn HTTP server (/metrics + /healthz)
+    let http_addr: SocketAddr = ([0, 0, 0, 0], cfg.daemon.metrics_port).into();
     let registry = m.registry.clone();
+    let health_clone = health.clone();
     tokio::spawn(async move {
-        if let Err(e) = metrics::serve_metrics(metrics_addr, registry).await {
-            error!(error = %e, "metrics server failed");
+        if let Err(e) = metrics::serve_http(http_addr, registry, health_clone).await {
+            error!(error = %e, "http server failed");
         }
     });
 

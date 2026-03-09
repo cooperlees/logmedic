@@ -74,7 +74,7 @@ fn default_lookback() -> String {
 }
 
 fn default_metrics_port() -> u16 {
-    9090
+    6969
 }
 
 pub fn load_config(path: &str) -> anyhow::Result<Config> {

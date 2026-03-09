@@ -1,7 +1,83 @@
+use std::sync::Arc;
+
 use prometheus::{
     self, Gauge, GaugeVec, Histogram, HistogramOpts, HistogramVec, IntCounter, IntCounterVec,
     IntGauge, Opts, Registry,
 };
+
+/// Shared health state checked by the /healthz endpoint.
+#[derive(Clone)]
+pub struct Health {
+    inner: Arc<std::sync::RwLock<HealthState>>,
+}
+
+struct HealthState {
+    detectors_expected: usize,
+    detectors_loaded: usize,
+    remediators_expected: usize,
+    remediators_loaded: usize,
+    ready: bool,
+}
+
+#[derive(serde::Serialize)]
+struct HealthResponse {
+    status: &'static str,
+    detectors: PluginHealth,
+    remediators: PluginHealth,
+}
+
+#[derive(serde::Serialize)]
+struct PluginHealth {
+    expected: usize,
+    loaded: usize,
+    ok: bool,
+}
+
+impl Health {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(std::sync::RwLock::new(HealthState {
+                detectors_expected: 0,
+                detectors_loaded: 0,
+                remediators_expected: 0,
+                remediators_loaded: 0,
+                ready: false,
+            })),
+        }
+    }
+
+    pub fn set_expected(&self, detectors: usize, remediators: usize) {
+        let mut state = self.inner.write().unwrap();
+        state.detectors_expected = detectors;
+        state.remediators_expected = remediators;
+    }
+
+    pub fn set_loaded(&self, detectors: usize, remediators: usize) {
+        let mut state = self.inner.write().unwrap();
+        state.detectors_loaded = detectors;
+        state.remediators_loaded = remediators;
+        state.ready = detectors == state.detectors_expected
+            && remediators == state.remediators_expected;
+    }
+
+    fn check(&self) -> (bool, String) {
+        let state = self.inner.read().unwrap();
+        let resp = HealthResponse {
+            status: if state.ready { "healthy" } else { "unhealthy" },
+            detectors: PluginHealth {
+                expected: state.detectors_expected,
+                loaded: state.detectors_loaded,
+                ok: state.detectors_loaded == state.detectors_expected,
+            },
+            remediators: PluginHealth {
+                expected: state.remediators_expected,
+                loaded: state.remediators_loaded,
+                ok: state.remediators_loaded == state.remediators_expected,
+            },
+        };
+        (state.ready, serde_json::to_string_pretty(&resp).unwrap())
+    }
+}
 
 #[derive(Clone)]
 pub struct Metrics {
@@ -176,10 +252,11 @@ impl Metrics {
     }
 }
 
-/// Spawn an HTTP server that serves /metrics for Prometheus scraping.
-pub async fn serve_metrics(
+/// Spawn an HTTP server that serves /metrics and /healthz.
+pub async fn serve_http(
     addr: std::net::SocketAddr,
     registry: Registry,
+    health: Health,
 ) -> anyhow::Result<()> {
     use http_body_util::Full;
     use hyper::body::Bytes;
@@ -190,33 +267,45 @@ pub async fn serve_metrics(
     use tokio::net::TcpListener;
 
     let listener = TcpListener::bind(addr).await?;
-    tracing::info!(addr = %addr, "metrics server listening");
+    tracing::info!(addr = %addr, "http server listening (/metrics, /healthz)");
 
     loop {
         let (stream, _) = listener.accept().await?;
         let io = TokioIo::new(stream);
         let registry = registry.clone();
+        let health = health.clone();
 
         tokio::spawn(async move {
             let service = service_fn(move |req: Request<hyper::body::Incoming>| {
                 let registry = registry.clone();
+                let health = health.clone();
                 async move {
-                    if req.uri().path() == "/metrics" {
-                        let encoder = prometheus::TextEncoder::new();
-                        let metric_families = registry.gather();
-                        let mut buffer = Vec::new();
-                        encoder.encode(&metric_families, &mut buffer).unwrap();
-                        Ok::<_, hyper::Error>(
-                            Response::builder()
-                                .header("Content-Type", encoder.format_type())
-                                .body(Full::new(Bytes::from(buffer)))
-                                .unwrap(),
-                        )
-                    } else {
-                        Ok(Response::builder()
+                    match req.uri().path() {
+                        "/metrics" => {
+                            let encoder = prometheus::TextEncoder::new();
+                            let metric_families = registry.gather();
+                            let mut buffer = Vec::new();
+                            encoder.encode(&metric_families, &mut buffer).unwrap();
+                            Ok::<_, hyper::Error>(
+                                Response::builder()
+                                    .header("Content-Type", encoder.format_type())
+                                    .body(Full::new(Bytes::from(buffer)))
+                                    .unwrap(),
+                            )
+                        }
+                        "/healthz" => {
+                            let (healthy, body) = health.check();
+                            let status = if healthy { 200 } else { 503 };
+                            Ok(Response::builder()
+                                .status(status)
+                                .header("Content-Type", "application/json")
+                                .body(Full::new(Bytes::from(body)))
+                                .unwrap())
+                        }
+                        _ => Ok(Response::builder()
                             .status(404)
                             .body(Full::new(Bytes::from("Not Found")))
-                            .unwrap())
+                            .unwrap()),
                     }
                 }
             });
@@ -225,7 +314,7 @@ pub async fn serve_metrics(
                 .serve_connection(io, service)
                 .await
             {
-                tracing::warn!(error = %e, "metrics connection error");
+                tracing::warn!(error = %e, "http connection error");
             }
         });
     }

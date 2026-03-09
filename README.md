@@ -72,7 +72,7 @@ Remediators take anomalies and fix them. They implement the `Remediator` trait w
 poll_interval_secs = 300   # how often to run detection (5 min)
 frequency_threshold = 50   # min occurrences to flag a pattern
 lookback = "1h"            # time window for log queries
-metrics_port = 9090        # Prometheus /metrics endpoint
+metrics_port = 6969        # Prometheus /metrics endpoint
 
 [[plugins]]
 name = "loki"
@@ -123,7 +123,10 @@ RUST_LOG=logmedic=debug ./target/release/logmedic
 
 ## Metrics
 
-logmedic exposes a Prometheus-compatible `/metrics` endpoint (default port 9090). Scrape it with your existing Prometheus instance.
+logmedic runs an HTTP server (default port 6969) with two endpoints:
+
+- **`/healthz`** — Returns `200` if all plugins loaded successfully, `503` otherwise. JSON body shows expected vs loaded counts for detectors and remediators.
+- **`/metrics`** — Prometheus-compatible metrics endpoint. Scrape it with your existing Prometheus instance.
 
 Exposed metrics:
 
@@ -151,7 +154,7 @@ Example Prometheus scrape config:
 scrape_configs:
   - job_name: logmedic
     static_configs:
-      - targets: ['localhost:9090']
+      - targets: ['localhost:6969']
 ```
 
 ## License
