@@ -96,8 +96,8 @@ jobs:
               sudo sed -i '/^Types: deb/a Architectures: amd64' "$f"
             fi
           done
-          # deadsnakes PPA provides python3.13-dev:arm64 which Ubuntu 24.04's
-          # built-in arm64 package archive does not include.
+          # deadsnakes PPA provides libpython3.13-dev:arm64 which Ubuntu 24.04's
+          # built-in arm64 archive does not include.
           sudo add-apt-repository -y -n ppa:deadsnakes/ppa
           # Ensure arm64 is included in the newly created deadsnakes source entry.
           for f in /etc/apt/sources.list.d/*deadsnakes*.sources; do
@@ -115,7 +115,12 @@ jobs:
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME}-updates main restricted universe" | \
             sudo tee -a /etc/apt/sources.list.d/ubuntu-arm64-ports.list
           sudo apt-get update -q
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu python3.13-dev:arm64
+          # Install libpython3.13-dev (not python3.13-dev) to avoid python3.13:arm64
+          # whose postinst tries to execute the arm64 binary on the x86_64 host.
+          # libpython3.13-dev provides the headers and libpython3.13.so symlink
+          # that PyO3 needs for cross-compilation; it only depends on the shared
+          # library package, which configures cleanly via ldconfig.
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libpython3.13-dev:arm64
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           echo "PYO3_CROSS_PYTHON_VERSION=3.13" >> "$GITHUB_ENV"
           echo "PYO3_CROSS_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> "$GITHUB_ENV"
