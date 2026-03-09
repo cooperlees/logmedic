@@ -69,6 +69,10 @@ jobs:
             target: aarch64-apple-darwin
             artifact: logmedic
             cross: false
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: logmedic.exe
+            cross: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -79,6 +83,10 @@ jobs:
         run: |
           PY_PREFIX=$(python3.13 -c "import sys; print(sys.prefix)")
           echo "LIBRARY_PATH=${PY_PREFIX}/lib" >> $GITHUB_ENV
+      - name: Set PYO3_PYTHON for Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "PYO3_PYTHON=python" >> $GITHUB_ENV
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -89,6 +97,7 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build
+        shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }}
