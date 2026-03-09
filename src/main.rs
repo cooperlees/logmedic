@@ -15,12 +15,11 @@ use crate::remediate::ActionKind;
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| {
-                    "logmedic=info"
-                        .parse()
-                        .expect("hard-coded log filter 'logmedic=info' should always parse")
-                }),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                "logmedic=info"
+                    .parse()
+                    .expect("hard-coded log filter 'logmedic=info' should always parse")
+            }),
         )
         .init();
 
@@ -125,7 +124,10 @@ async fn main() -> anyhow::Result<()> {
         if all_anomalies.is_empty() {
             info!("no anomalies detected this cycle");
         } else {
-            info!(count = all_anomalies.len(), "anomalies detected, proposing remediations");
+            info!(
+                count = all_anomalies.len(),
+                "anomalies detected, proposing remediations"
+            );
 
             // Phase 2: Propose remediations
             for remediator in &remediators {

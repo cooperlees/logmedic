@@ -9,9 +9,7 @@ use crate::error::PluginError;
 use crate::remediate::Remediator;
 
 /// Loads all detector plugins from config.
-pub fn load_detectors(
-    configs: &[PluginConfig],
-) -> Result<Vec<Box<dyn Detector>>, PluginError> {
+pub fn load_detectors(configs: &[PluginConfig]) -> Result<Vec<Box<dyn Detector>>, PluginError> {
     let mut detectors: Vec<Box<dyn Detector>> = Vec::new();
     for cfg in configs {
         info!(plugin = %cfg.name, kind = ?cfg.kind, "loading detector plugin");

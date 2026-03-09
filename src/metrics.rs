@@ -62,8 +62,8 @@ impl Health {
             .expect("health state RwLock poisoned — a thread panicked while holding the lock");
         state.detectors_loaded = detectors;
         state.remediators_loaded = remediators;
-        state.ready = detectors == state.detectors_expected
-            && remediators == state.remediators_expected;
+        state.ready =
+            detectors == state.detectors_expected && remediators == state.remediators_expected;
     }
 
     fn check(&self) -> (bool, String) {
@@ -296,9 +296,9 @@ pub async fn serve_http(
                             let encoder = prometheus::TextEncoder::new();
                             let metric_families = registry.gather();
                             let mut buffer = Vec::new();
-                            encoder
-                                .encode(&metric_families, &mut buffer)
-                                .expect("prometheus text encoding to an in-memory buffer should never fail");
+                            encoder.encode(&metric_families, &mut buffer).expect(
+                                "prometheus text encoding to an in-memory buffer should never fail",
+                            );
                             Ok::<_, hyper::Error>(
                                 Response::builder()
                                     .header("Content-Type", encoder.format_type())

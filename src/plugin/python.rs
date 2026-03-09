@@ -23,11 +23,17 @@ fn module_stem(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
-fn setup_sys_path<'py>(py: Python<'py>, plugin_name: &str, plugin_path: &str) -> Result<(), PluginError> {
-    let sys = py.import_bound("sys").map_err(|e| PluginError::PythonSysPathError {
-        name: plugin_name.to_string(),
-        detail: e.to_string(),
-    })?;
+fn setup_sys_path<'py>(
+    py: Python<'py>,
+    plugin_name: &str,
+    plugin_path: &str,
+) -> Result<(), PluginError> {
+    let sys = py
+        .import_bound("sys")
+        .map_err(|e| PluginError::PythonSysPathError {
+            name: plugin_name.to_string(),
+            detail: e.to_string(),
+        })?;
     let path: Bound<'py, pyo3::types::PyList> = sys
         .getattr("path")
         .map_err(|e| PluginError::PythonSysPathError {
@@ -39,10 +45,11 @@ fn setup_sys_path<'py>(py: Python<'py>, plugin_name: &str, plugin_path: &str) ->
             name: plugin_name.to_string(),
             detail: e.to_string(),
         })?;
-    path.insert(0, module_dir(plugin_path)).map_err(|e| PluginError::PythonSysPathError {
-        name: plugin_name.to_string(),
-        detail: e.to_string(),
-    })?;
+    path.insert(0, module_dir(plugin_path))
+        .map_err(|e| PluginError::PythonSysPathError {
+            name: plugin_name.to_string(),
+            detail: e.to_string(),
+        })?;
     Ok(())
 }
 
@@ -64,12 +71,14 @@ impl PythonDetector {
             setup_sys_path(py, &self.plugin_name, &self.module_path)?;
 
             let stem = module_stem(&self.module_path);
-            let module = py.import_bound(stem.as_str()).map_err(|e| PluginError::PythonImportFailed {
-                name: self.plugin_name.clone(),
-                path: self.module_path.clone(),
-                module: stem.clone(),
-                detail: format_python_error(py, &e),
-            })?;
+            let module =
+                py.import_bound(stem.as_str())
+                    .map_err(|e| PluginError::PythonImportFailed {
+                        name: self.plugin_name.clone(),
+                        path: self.module_path.clone(),
+                        module: stem.clone(),
+                        detail: format_python_error(py, &e),
+                    })?;
 
             let settings: Bound<'_, PyDict> = PyDict::new_bound(py);
             settings
@@ -82,26 +91,25 @@ impl PythonDetector {
                     detail: e.to_string(),
                 })?;
 
-            let plugin =
-                module
-                    .call_method1("DetectorPlugin", (&settings,))
-                    .map_err(|e| PluginError::PythonMissingClass {
-                        name: self.plugin_name.clone(),
-                        module: stem.clone(),
-                        class: "DetectorPlugin".to_string(),
-                        detail: format_python_error(py, &e),
-                    })?;
+            let plugin = module
+                .call_method1("DetectorPlugin", (&settings,))
+                .map_err(|e| PluginError::PythonMissingClass {
+                    name: self.plugin_name.clone(),
+                    module: stem.clone(),
+                    class: "DetectorPlugin".to_string(),
+                    detail: format_python_error(py, &e),
+                })?;
 
-            let result =
-                plugin
-                    .call_method1("detect", (lookback, threshold))
-                    .map_err(|e| PluginError::PythonMethodCallFailed {
-                        name: self.plugin_name.clone(),
-                        class: "DetectorPlugin".to_string(),
-                        method: "detect".to_string(),
-                        expected_signature: "detect(self, lookback: str, threshold: int) -> list[dict]".to_string(),
-                        detail: format_python_error(py, &e),
-                    })?;
+            let result = plugin
+                .call_method1("detect", (lookback, threshold))
+                .map_err(|e| PluginError::PythonMethodCallFailed {
+                    name: self.plugin_name.clone(),
+                    class: "DetectorPlugin".to_string(),
+                    method: "detect".to_string(),
+                    expected_signature: "detect(self, lookback: str, threshold: int) -> list[dict]"
+                        .to_string(),
+                    detail: format_python_error(py, &e),
+                })?;
 
             let dicts: Vec<Bound<'_, PyDict>> =
                 result
@@ -109,7 +117,9 @@ impl PythonDetector {
                     .map_err(|e| PluginError::PythonReturnTypeError {
                         name: self.plugin_name.clone(),
                         method: "detect".to_string(),
-                        expected_type: "list[dict] where each dict has 'pattern' (str) and 'count' (int)".to_string(),
+                        expected_type:
+                            "list[dict] where each dict has 'pattern' (str) and 'count' (int)"
+                                .to_string(),
                         detail: e.to_string(),
                     })?;
 
@@ -138,10 +148,7 @@ impl Detector for PythonDetector {
         let name = self.plugin_name.clone();
         tokio::task::spawn_blocking(move || detector.call_detect(&lookback, threshold))
             .await
-            .map_err(|e| PluginError::TaskJoinError {
-                name,
-                source: e,
-            })?
+            .map_err(|e| PluginError::TaskJoinError { name, source: e })?
     }
 }
 
@@ -218,11 +225,12 @@ fn parse_anomaly_dict(
 }
 
 pub fn load_python_detector(cfg: &PluginConfig) -> Result<Box<dyn Detector>, PluginError> {
-    let settings_json =
-        serde_json::to_string(&cfg.settings).map_err(|e| PluginError::SettingsSerializationFailed {
+    let settings_json = serde_json::to_string(&cfg.settings).map_err(|e| {
+        PluginError::SettingsSerializationFailed {
             name: cfg.name.clone(),
             source: e,
-        })?;
+        }
+    })?;
     Ok(Box::new(PythonDetector {
         plugin_name: cfg.name.clone(),
         module_path: cfg.path.to_string_lossy().to_string(),
@@ -268,9 +276,11 @@ impl PythonRemediator {
                     })?;
 
             let actions: Vec<RemediationAction> =
-                serde_json::from_str(&actions_json).map_err(|e| PluginError::PythonJsonParseError {
-                    name: self.plugin_name.clone(),
-                    source: e,
+                serde_json::from_str(&actions_json).map_err(|e| {
+                    PluginError::PythonJsonParseError {
+                        name: self.plugin_name.clone(),
+                        source: e,
+                    }
                 })?;
             Ok(actions)
         })
@@ -299,11 +309,12 @@ impl PythonRemediator {
                         detail: e.to_string(),
                     })?;
 
-            let status: ActionStatus =
-                serde_json::from_str(&status_json).map_err(|e| PluginError::PythonJsonParseError {
+            let status: ActionStatus = serde_json::from_str(&status_json).map_err(|e| {
+                PluginError::PythonJsonParseError {
                     name: self.plugin_name.clone(),
                     source: e,
-                })?;
+                }
+            })?;
             Ok(status)
         })
     }
@@ -316,12 +327,14 @@ impl PythonRemediator {
         setup_sys_path(py, &self.plugin_name, &self.module_path)?;
 
         let stem = module_stem(&self.module_path);
-        let module = py.import_bound(stem.as_str()).map_err(|e| PluginError::PythonImportFailed {
-            name: self.plugin_name.clone(),
-            path: self.module_path.clone(),
-            module: stem.clone(),
-            detail: format_python_error(py, &e),
-        })?;
+        let module =
+            py.import_bound(stem.as_str())
+                .map_err(|e| PluginError::PythonImportFailed {
+                    name: self.plugin_name.clone(),
+                    path: self.module_path.clone(),
+                    module: stem.clone(),
+                    detail: format_python_error(py, &e),
+                })?;
 
         let settings: Bound<'_, PyDict> = PyDict::new_bound(py);
         settings
@@ -369,10 +382,7 @@ impl Remediator for PythonRemediator {
         let name = self.plugin_name.clone();
         tokio::task::spawn_blocking(move || remediator.call_propose(&anomalies_json))
             .await
-            .map_err(|e| PluginError::TaskJoinError {
-                name,
-                source: e,
-            })?
+            .map_err(|e| PluginError::TaskJoinError { name, source: e })?
     }
 
     async fn execute(&self, action: &RemediationAction) -> Result<ActionStatus, PluginError> {
@@ -390,19 +400,17 @@ impl Remediator for PythonRemediator {
         let name = self.plugin_name.clone();
         tokio::task::spawn_blocking(move || remediator.call_execute(&action_json))
             .await
-            .map_err(|e| PluginError::TaskJoinError {
-                name,
-                source: e,
-            })?
+            .map_err(|e| PluginError::TaskJoinError { name, source: e })?
     }
 }
 
 pub fn load_python_remediator(cfg: &RemediatorConfig) -> Result<Box<dyn Remediator>, PluginError> {
-    let settings_json =
-        serde_json::to_string(&cfg.settings).map_err(|e| PluginError::SettingsSerializationFailed {
+    let settings_json = serde_json::to_string(&cfg.settings).map_err(|e| {
+        PluginError::SettingsSerializationFailed {
             name: cfg.name.clone(),
             source: e,
-        })?;
+        }
+    })?;
     let module_path = cfg
         .settings
         .get("path")

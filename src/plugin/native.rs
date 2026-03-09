@@ -14,11 +14,12 @@ type CreateDetectorFn = unsafe fn(settings: &str) -> Box<dyn Detector>;
 type CreateRemediatorFn = unsafe fn(settings: &str) -> Box<dyn Remediator>;
 
 pub fn load_native_detector(cfg: &PluginConfig) -> Result<Box<dyn Detector>, PluginError> {
-    let settings_json =
-        serde_json::to_string(&cfg.settings).map_err(|e| PluginError::SettingsSerializationFailed {
+    let settings_json = serde_json::to_string(&cfg.settings).map_err(|e| {
+        PluginError::SettingsSerializationFailed {
             name: cfg.name.clone(),
             source: e,
-        })?;
+        }
+    })?;
     unsafe {
         let lib = Library::new(&cfg.path).map_err(|e| PluginError::NativeLoadFailed {
             name: cfg.name.clone(),
@@ -41,11 +42,12 @@ pub fn load_native_detector(cfg: &PluginConfig) -> Result<Box<dyn Detector>, Plu
 }
 
 pub fn load_native_remediator(cfg: &RemediatorConfig) -> Result<Box<dyn Remediator>, PluginError> {
-    let settings_json =
-        serde_json::to_string(&cfg.settings).map_err(|e| PluginError::SettingsSerializationFailed {
+    let settings_json = serde_json::to_string(&cfg.settings).map_err(|e| {
+        PluginError::SettingsSerializationFailed {
             name: cfg.name.clone(),
             source: e,
-        })?;
+        }
+    })?;
     let path = cfg
         .settings
         .get("path")

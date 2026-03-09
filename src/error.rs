@@ -22,6 +22,7 @@ pub enum Error {
     Metrics(#[from] prometheus::Error),
 
     #[error("http server failed on {addr}: {source}")]
+    #[allow(dead_code)]
     HttpServer {
         addr: std::net::SocketAddr,
         source: std::io::Error,
@@ -33,7 +34,6 @@ pub enum Error {
 #[derive(Debug, thiserror::Error)]
 pub enum PluginError {
     // ── Native plugin errors ────────────────────────────────────────
-
     #[error(
         "failed to load native plugin '{name}' from '{path}': {source}\n\
          hint: ensure the shared library exists and is compiled for this platform"
@@ -56,7 +56,6 @@ pub enum PluginError {
     },
 
     // ── Python plugin errors ────────────────────────────────────────
-
     #[error(
         "python plugin '{name}': failed to import module '{module}'\n\
          hint: check that '{path}' exists and has no syntax errors. \
@@ -134,7 +133,6 @@ pub enum PluginError {
     PythonSysPathError { name: String, detail: String },
 
     // ── Config / general errors ─────────────────────────────────────
-
     #[error(
         "remediator '{name}': missing required setting 'path' in [remediators.settings]\n\
          hint: add `path = \"plugins/my_remediator/my_remediator.py\"` to the config"

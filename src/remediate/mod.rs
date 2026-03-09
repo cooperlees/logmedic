@@ -24,14 +24,9 @@ pub enum ActionKind {
         files_changed: Vec<FileChange>,
     },
     /// SSH into a host and run commands
-    SshCommand {
-        host: String,
-        commands: Vec<String>,
-    },
+    SshCommand { host: String, commands: Vec<String> },
     /// Just report — no automated action
-    Report {
-        message: String,
-    },
+    Report { message: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
