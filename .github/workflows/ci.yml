@@ -61,10 +61,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             artifact: logmedic
             cross: false
-          - os: ubuntu-latest
+          - os: ubuntu-22.04-arm
             target: aarch64-unknown-linux-gnu
             artifact: logmedic
-            cross: true
+            cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: logmedic
@@ -89,8 +89,6 @@ jobs:
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build
-        env:
-          PYO3_CROSS_PYTHON_VERSION: "3.13"
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }}
