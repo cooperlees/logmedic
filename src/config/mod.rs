@@ -21,6 +21,9 @@ pub struct DaemonConfig {
     /// Lookback window for log queries (e.g. "1h", "30m")
     #[serde(default = "default_lookback")]
     pub lookback: String,
+    /// Port for Prometheus metrics HTTP endpoint
+    #[serde(default = "default_metrics_port")]
+    pub metrics_port: u16,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -68,6 +71,10 @@ fn default_threshold() -> u64 {
 
 fn default_lookback() -> String {
     "1h".to_string()
+}
+
+fn default_metrics_port() -> u16 {
+    9090
 }
 
 pub fn load_config(path: &str) -> anyhow::Result<Config> {

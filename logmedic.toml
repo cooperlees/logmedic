@@ -4,6 +4,7 @@
 poll_interval_secs = 300   # 5 minutes
 frequency_threshold = 50   # min occurrences to flag
 lookback = "1h"
+metrics_port = 9090        # Prometheus /metrics endpoint
 
 # --- Detector plugins ---
 

@@ -72,6 +72,7 @@ Remediators take anomalies and fix them. They implement the `Remediator` trait w
 poll_interval_secs = 300   # how often to run detection (5 min)
 frequency_threshold = 50   # min occurrences to flag a pattern
 lookback = "1h"            # time window for log queries
+metrics_port = 9090        # Prometheus /metrics endpoint
 
 [[plugins]]
 name = "loki"
@@ -118,6 +119,39 @@ Requires:
 
 # With debug logging
 RUST_LOG=logmedic=debug ./target/release/logmedic
+```
+
+## Metrics
+
+logmedic exposes a Prometheus-compatible `/metrics` endpoint (default port 9090). Scrape it with your existing Prometheus instance.
+
+Exposed metrics:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `logmedic_detectors_loaded` | gauge | Number of detector plugins loaded |
+| `logmedic_remediators_loaded` | gauge | Number of remediator plugins loaded |
+| `logmedic_detection_cycles_total` | counter | Total detection cycles run |
+| `logmedic_detection_cycle_duration_seconds` | histogram | Duration of each full cycle |
+| `logmedic_detector_runs_total` | counter | Runs per detector (label: `detector`) |
+| `logmedic_detector_errors_total` | counter | Errors per detector (label: `detector`) |
+| `logmedic_anomalies_detected_total` | counter | Anomalies found per detector |
+| `logmedic_anomalies_per_cycle` | gauge | Anomalies in the most recent cycle per detector |
+| `logmedic_anomalies_by_level_total` | counter | Anomalies by severity (label: `level`) |
+| `logmedic_remediations_proposed_total` | counter | Actions proposed per remediator |
+| `logmedic_remediations_executed_total` | counter | Actions executed (labels: `remediator`, `status`) |
+| `logmedic_remediation_errors_total` | counter | Execution errors per remediator |
+| `logmedic_remediation_duration_seconds` | histogram | Execution duration per remediator |
+| `logmedic_remediation_actions_by_kind_total` | counter | Actions by kind (`pull_request`, `ssh_command`, `report`) |
+| `logmedic_daemon_start_time_seconds` | gauge | Unix timestamp of daemon start |
+
+Example Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: logmedic
+    static_configs:
+      - targets: ['localhost:9090']
 ```
 
 ## License
