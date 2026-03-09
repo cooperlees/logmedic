@@ -117,6 +117,8 @@ Requires:
 - Python 3.9–3.13 (for PyO3 plugin embedding; 3.14 not yet supported — see [PyO3#4584](https://github.com/PyO3/pyo3/issues/4584))
 - `pkg-config` and Python development headers (`python3-dev` / `python3-devel`)
 
+**Python version policy:** logmedic aggressively tracks the latest Python release. Each logmedic release will target the newest Python version supported by PyO3. Plugin authors should write modern Python and avoid deprecated features — if the latest stable CPython supports it, use it.
+
 ## Running
 
 ```bash
