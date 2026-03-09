@@ -94,7 +94,19 @@ jobs:
               sudo sed -i '/^Types: deb/a Architectures: amd64' "$f"
             fi
           done
-          # Add ubuntu-ports as the arm64 package source
+          # deadsnakes PPA provides python3.13-dev:arm64 which Ubuntu 24.04's
+          # built-in arm64 package archive does not include.
+          sudo add-apt-repository -y -n ppa:deadsnakes/ppa
+          # Ensure arm64 is included in the newly created deadsnakes source entry.
+          for f in /etc/apt/sources.list.d/*deadsnakes*.sources; do
+            [ -f "$f" ] || continue
+            if grep -q '^Architectures:' "$f"; then
+              sudo sed -i 's/^Architectures:.*/Architectures: amd64 arm64/' "$f"
+            else
+              sudo sed -i '/^Types:/a Architectures: amd64 arm64' "$f"
+            fi
+          done
+          # Add ubuntu-ports as the arm64 base package source
           CODENAME=$(lsb_release -cs)
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports ${CODENAME} main restricted universe" | \
             sudo tee /etc/apt/sources.list.d/ubuntu-arm64-ports.list
