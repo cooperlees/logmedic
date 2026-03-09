@@ -60,26 +60,22 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             artifact: logmedic
-            cross: false
-          - os: ubuntu-22.04-arm
+          - os: ubuntu-latest-arm
             target: aarch64-unknown-linux-gnu
             artifact: logmedic
-            cross: false
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: logmedic
-            cross: false
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact: logmedic.exe
-            cross: false
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
       - name: Set Python library path for linker
-        if: runner.os == 'Linux' && !matrix.cross
+        if: runner.os == 'Linux'
         run: |
           PY_PREFIX=$(python3.13 -c "import sys; print(sys.prefix)")
           echo "LIBRARY_PATH=${PY_PREFIX}/lib" >> $GITHUB_ENV
@@ -93,17 +89,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - name: Install cross
-        if: matrix.cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build
         shell: bash
-        run: |
-          if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }}
-          else
-            cargo build --release --target ${{ matrix.target }}
-          fi
+        run: cargo build --release --target ${{ matrix.target }}
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
