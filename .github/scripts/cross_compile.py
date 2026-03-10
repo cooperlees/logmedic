@@ -68,7 +68,9 @@ def configure_deadsnakes_for_arm64() -> None:
     """Add deadsnakes PPA and ensure it serves both amd64 and arm64."""
     run(["sudo", "add-apt-repository", "-y", "-n", "ppa:deadsnakes/ppa"])
 
-    for source_file in sorted(Path("/etc/apt/sources.list.d").glob("*deadsnakes*.sources")):
+    for source_file in sorted(
+        Path("/etc/apt/sources.list.d").glob("*deadsnakes*.sources")
+    ):
         content = source_file.read_text(encoding="utf-8")
         if "Architectures:" in content:
             run(
@@ -106,7 +108,14 @@ def add_ubuntu_ports_source() -> None:
         + "\n",
         encoding="utf-8",
     )
-    run(["sudo", "cp", str(ports_file), "/etc/apt/sources.list.d/ubuntu-arm64-ports.list"])
+    run(
+        [
+            "sudo",
+            "cp",
+            str(ports_file),
+            "/etc/apt/sources.list.d/ubuntu-arm64-ports.list",
+        ]
+    )
 
 
 def install_cross_dependencies() -> None:
@@ -176,7 +185,9 @@ def write_github_env() -> None:
         raise RuntimeError("GITHUB_ENV is not set")
 
     with Path(github_env).open("a", encoding="utf-8") as env_file:
-        env_file.write("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc\n")
+        env_file.write(
+            "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc\n"
+        )
         env_file.write("PYO3_CROSS_PYTHON_VERSION=3.13\n")
         env_file.write(f"PYO3_CROSS_LIB_DIR={AARCH64_LIB_DIR}\n")
 
