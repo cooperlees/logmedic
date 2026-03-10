@@ -9,13 +9,25 @@ exists because PyO3 + cross-arch Python packaging on Ubuntu has several gotchas.
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
+AARCH64_LIB_DIR = Path("/usr/lib/aarch64-linux-gnu")
+AARCH64_PYTHON_DIR = AARCH64_LIB_DIR / "python3.13"
 
-def run(command: list[str], *, capture_output: bool = False) -> subprocess.CompletedProcess[str]:
+
+def run(
+    command: list[str], *, capture_output: bool = False, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str]:
     """Run a command and fail fast with useful stderr/stdout passthrough."""
-    return subprocess.run(command, check=True, text=True, capture_output=capture_output)
+    return subprocess.run(
+        command,
+        check=True,
+        text=True,
+        capture_output=capture_output,
+        cwd=cwd,
+    )
 
 
 def ensure_arm64_apt_sources() -> None:
@@ -124,35 +136,37 @@ def stage_single_sysconfigdata() -> None:
     """
     tmp_dir = Path("/tmp/logmedic-py-cross")
     if tmp_dir.exists():
-        run(["rm", "-rf", str(tmp_dir)])
+        shutil.rmtree(tmp_dir)
     tmp_dir.mkdir(parents=True)
 
-    run(["bash", "-lc", f"cd {tmp_dir} && apt-get download python3.13:arm64"])
-    run(["bash", "-lc", f"cd {tmp_dir} && mkdir -p pymin && dpkg-deb --extract python3.13_*.deb pymin"])
+    run(["apt-get", "download", "python3.13:arm64"], cwd=tmp_dir)
+    pymin_dir = tmp_dir / "pymin"
+    pymin_dir.mkdir(parents=True, exist_ok=True)
+    deb_candidates = sorted(tmp_dir.glob("python3.13_*.deb"))
+    if not deb_candidates:
+        raise RuntimeError("Could not download python3.13:arm64 package")
+    run(["dpkg-deb", "--extract", str(deb_candidates[0]), str(pymin_dir)])
 
+    search_roots = [
+        Path("/usr/lib/python3.13"),
+        AARCH64_PYTHON_DIR,
+        pymin_dir,
+    ]
     candidates = sorted(
-        Path(path)
-        for path in (
-            run(
-                [
-                    "bash",
-                    "-lc",
-                    f"find /usr/lib/python3.13 /usr/lib/aarch64-linux-gnu/python3.13 {tmp_dir / 'pymin'} -name '_sysconfigdata*.py' 2>/dev/null",
-                ],
-                capture_output=True,
-            ).stdout.splitlines()
-        )
-        if path
+        candidate
+        for root in search_roots
+        if root.exists()
+        for candidate in root.rglob("_sysconfigdata*.py")
     )
 
     if not candidates:
         raise RuntimeError("Could not locate _sysconfigdata*.py for arm64 Python 3.13")
 
     sysconfigdata_path = candidates[0]
-    run(["sudo", "mkdir", "-p", "/usr/lib/aarch64-linux-gnu/python3.13"])
-    for duplicate in Path("/usr/lib/aarch64-linux-gnu/python3.13").glob("_sysconfigdata*.py"):
+    run(["sudo", "mkdir", "-p", str(AARCH64_PYTHON_DIR)])
+    for duplicate in AARCH64_PYTHON_DIR.glob("_sysconfigdata*.py"):
         run(["sudo", "rm", "-f", str(duplicate)])
-    run(["sudo", "cp", str(sysconfigdata_path), "/usr/lib/aarch64-linux-gnu/"])
+    run(["sudo", "cp", str(sysconfigdata_path), str(AARCH64_LIB_DIR)])
 
 
 def write_github_env() -> None:
@@ -164,7 +178,7 @@ def write_github_env() -> None:
     with Path(github_env).open("a", encoding="utf-8") as env_file:
         env_file.write("CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc\n")
         env_file.write("PYO3_CROSS_PYTHON_VERSION=3.13\n")
-        env_file.write("PYO3_CROSS_LIB_DIR=/usr/lib/aarch64-linux-gnu\n")
+        env_file.write(f"PYO3_CROSS_LIB_DIR={AARCH64_LIB_DIR}\n")
 
 
 def main() -> None:
