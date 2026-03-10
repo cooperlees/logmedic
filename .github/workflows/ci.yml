@@ -120,7 +120,9 @@ jobs:
           # libpython3.13-dev provides the headers and libpython3.13.so symlink
           # that PyO3 needs for cross-compilation; it only depends on the shared
           # library package, which configures cleanly via ldconfig.
-          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libpython3.13-dev:arm64
+          # Also install libpython3.13-stdlib:arm64 to obtain target stdlib files,
+          # including _sysconfigdata*.py, without installing the target interpreter.
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu libpython3.13-dev:arm64 libpython3.13-stdlib:arm64
           # pyo3-ffi's build script searches PYO3_CROSS_LIB_DIR (and its python3.X
           # subdirectory) for _sysconfigdata*.py to determine the target Python
           # configuration. The deadsnakes PPA provides python3.13:arm64 (not
@@ -129,12 +131,19 @@ jobs:
           # to obtain the _sysconfigdata*.py file.
           cd /tmp
           apt-get download python3.13:arm64
-          mkdir pymin
+          mkdir -p pymin
           dpkg-deb --extract python3.13_*.deb pymin
+          # PyO3 currently looks in PYO3_CROSS_LIB_DIR itself for _sysconfigdata*.py.
+          # Locate the target file from known locations and copy it to both the lib dir
+          # root and python3.13 subdir for compatibility with PyO3 search behavior.
+          SYSCONFIGDATA_PATH="$(find /usr/lib/python3.13 /usr/lib/aarch64-linux-gnu/python3.13 pymin -name '_sysconfigdata*.py' 2>/dev/null | head -n1)"
+          if [ -z "$SYSCONFIGDATA_PATH" ]; then
+            echo "Could not locate _sysconfigdata*.py for arm64 Python 3.13"
+            exit 1
+          fi
           sudo mkdir -p /usr/lib/aarch64-linux-gnu/python3.13
-          # The _sysconfigdata*.py file may be in a subdirectory (e.g. plat-aarch64-linux-gnu/)
-          # depending on the package. Use find to locate it regardless of where it lives.
-          find pymin -name '_sysconfigdata*.py' -exec sudo cp {} /usr/lib/aarch64-linux-gnu/python3.13/ \;
+          sudo cp "$SYSCONFIGDATA_PATH" /usr/lib/aarch64-linux-gnu/
+          sudo cp "$SYSCONFIGDATA_PATH" /usr/lib/aarch64-linux-gnu/python3.13/
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
           echo "PYO3_CROSS_PYTHON_VERSION=3.13" >> "$GITHUB_ENV"
           echo "PYO3_CROSS_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> "$GITHUB_ENV"
