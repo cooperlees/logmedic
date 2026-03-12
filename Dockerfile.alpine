@@ -1,3 +1,0 @@
-# Replaced by Dockerfile.debian, which uses the same native cross-compilation
-# approach as Dockerfile.distroless (no QEMU) while still providing a shell
-# and standard utilities for debugging.
