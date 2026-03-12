@@ -1,0 +1,22 @@
+# syntax=docker/dockerfile:1
+# Build the logmedic binary and package it into a minimal Alpine image.
+# The builder uses rust:alpine so the binary is linked against musl, which
+# matches Alpine's libc.  Docker Buildx + QEMU handles arm64.
+
+FROM rust:alpine AS builder
+
+WORKDIR /usr/src/logmedic
+
+# musl-dev provides the musl C library headers needed by the Rust build.
+RUN apk add --no-cache musl-dev
+
+COPY . .
+
+# Build without Python support so the binary has no runtime Python dependency.
+RUN cargo build --release --no-default-features
+
+FROM alpine:3
+
+COPY --from=builder /usr/src/logmedic/target/release/logmedic /logmedic
+
+ENTRYPOINT ["/logmedic"]

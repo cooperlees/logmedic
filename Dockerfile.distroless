@@ -1,0 +1,44 @@
+# syntax=docker/dockerfile:1
+# Build the logmedic binary and package it into a minimal distroless image.
+# Supports linux/amd64 and linux/arm64 via cross-compilation on the build host
+# (no QEMU emulation needed).
+
+FROM --platform=$BUILDPLATFORM rust:1-slim-bookworm AS builder
+
+ARG TARGETARCH
+
+WORKDIR /usr/src/logmedic
+
+# Install the aarch64 cross-linker only when targeting arm64.
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      apt-get update && \
+      apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+COPY . .
+
+# Build without Python support so the binary has no runtime Python dependency.
+RUN case "$TARGETARCH" in \
+      "amd64") \
+        cargo build --release --no-default-features ;; \
+      "arm64") \
+        rustup target add aarch64-unknown-linux-gnu && \
+        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+          cargo build --release --no-default-features \
+            --target aarch64-unknown-linux-gnu ;; \
+      *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
+    esac
+
+# Copy the binary to a fixed path regardless of target triple.
+RUN case "$TARGETARCH" in \
+      "amd64") cp target/release/logmedic /tmp/logmedic ;; \
+      "arm64") cp target/aarch64-unknown-linux-gnu/release/logmedic /tmp/logmedic ;; \
+    esac
+
+# distroless/cc includes glibc and libgcc – enough to run a standard GNU/Linux binary.
+FROM gcr.io/distroless/cc-debian12
+
+COPY --from=builder /tmp/logmedic /logmedic
+
+ENTRYPOINT ["/logmedic"]
