@@ -23,8 +23,8 @@ Production systems generate enormous volumes of logs. When something goes wrong,
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                 logmedic daemon                  │
-│              (tokio async runtime)               │
+│                 logmedic daemon                 │
+│              (tokio async runtime)              │
 ├─────────────┬───────────────────┬───────────────┤
 │   Config    │  Plugin Manager   │   Scheduler   │
 │   (TOML)    │                   │  (poll loop)  │
