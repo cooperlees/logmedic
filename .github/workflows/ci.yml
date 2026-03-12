@@ -17,6 +17,20 @@ env:
   PYO3_PYTHON: python3.13
 
 jobs:
+  changes:
+    name: Detect Changed Files
+    runs-on: ubuntu-latest
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            python:
+              - '.github/scripts/**/*.py'
+
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -57,6 +71,8 @@ jobs:
 
   python-cross-compile-checks:
     name: Python Cross-Compile Script Checks
+    needs: [changes]
+    if: needs.changes.outputs.python == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,6 +87,7 @@ jobs:
   build-release:
     name: Build Release Binary
     needs: [fmt, clippy, test, python-cross-compile-checks]
+    if: ${{ always() && needs.fmt.result == 'success' && needs.clippy.result == 'success' && needs.test.result == 'success' && (needs.python-cross-compile-checks.result == 'success' || needs.python-cross-compile-checks.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
