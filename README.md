@@ -119,6 +119,25 @@ Requires:
 
 **Python version policy:** logmedic aggressively tracks the latest Python release. Each logmedic release will target the newest Python version supported by PyO3. Plugin authors should write modern Python and avoid deprecated features — if the latest stable CPython supports it, use it.
 
+## Docker
+
+Pre-built multi-arch images (`linux/amd64` + `linux/arm64`) are pushed to Docker Hub on every merge to `main` and on version tags.
+
+| Tag | Base image | Description |
+|-----|-----------|-------------|
+| `cooperlees/logmedic:latest` | `gcr.io/distroless/cc-debian12` | Minimal distroless image (no shell). Recommended for production. |
+| `cooperlees/logmedic:v1.2.3` | `gcr.io/distroless/cc-debian12` | Pinned release — distroless. |
+| `cooperlees/logmedic:latest-debian` | `debian:12-slim` | Debian slim image with bash/shell for debugging. |
+| `cooperlees/logmedic:v1.2.3-debian` | `debian:12-slim` | Pinned release — Debian slim. |
+
+```bash
+# Minimal distroless (recommended)
+docker run --rm -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest /config.toml
+
+# Debian slim (has shell for debugging)
+docker run --rm -it -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest-debian bash
+```
+
 ## Running
 
 ```bash
