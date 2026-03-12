@@ -9,10 +9,16 @@ ARG TARGETARCH
 
 WORKDIR /usr/src/logmedic
 
-# Install the aarch64 cross-linker only when targeting arm64.
+# Install the aarch64 cross-linker and ARM64 C library headers when targeting arm64.
+# libc6-dev-arm64-cross is required because gcc-aarch64-linux-gnu alone does not pull
+# in the ARM64 sysroot headers (/usr/aarch64-linux-gnu/include/bits/libc-header-start.h
+# etc.).  Without it, transitive C code compiled by cc-rs (e.g. ring's curve25519.c)
+# fails with "fatal error: bits/libc-header-start.h: No such file or directory".
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
       apt-get update && \
-      apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu && \
+      apt-get install -y --no-install-recommends \
+        gcc-aarch64-linux-gnu \
+        libc6-dev-arm64-cross && \
       rm -rf /var/lib/apt/lists/*; \
     fi
 
