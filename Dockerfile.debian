@@ -1,41 +1,72 @@
 # syntax=docker/dockerfile:1
-# Build the logmedic binary and package it into a minimal Debian slim image.
+# Build the logmedic binary and package it into a minimal Ubuntu 24.04 (Noble) image.
+# Uses Ubuntu to match the GitHub Actions CI environment exactly, including Python 3.13
+# and the same cross-compilation script (.github/scripts/cross_compile.py).
 # Supports linux/amd64 and linux/arm64 via cross-compilation on the build host
-# (no QEMU emulation needed).  Unlike the distroless image, debian:12-slim
-# includes bash and standard utilities, making it suitable for interactive
-# debugging.
+# (no QEMU emulation needed).  Unlike the distroless image, this image includes
+# bash and standard utilities, making it suitable for interactive debugging.
 
-FROM --platform=$BUILDPLATFORM rust:1-slim-bookworm AS builder
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS builder
 
 ARG TARGETARCH
 
+# Install base system dependencies common to all architectures.
+# sudo is required because .github/scripts/cross_compile.py uses it throughout;
+# Docker builds run as root so sudo becomes a passthrough, but the binary must exist.
+# software-properties-common provides add-apt-repository (needed for deadsnakes PPA).
+# lsb-release is used by cross_compile.py to detect the Ubuntu codename.
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      build-essential ca-certificates curl sudo lsb-release \
+      software-properties-common python3 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Rust via rustup (stable toolchain), matching the CI dtolnay/rust-toolchain@stable.
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y \
+      --default-toolchain stable --no-modify-path
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+
 WORKDIR /usr/src/logmedic
 
-# Install Python dev headers for PyO3 embedding and cross-compilation tools.
-# libc6-dev-arm64-cross is required because gcc-aarch64-linux-gnu alone does not pull
-# in the ARM64 sysroot headers (/usr/aarch64-linux-gnu/include/bits/libc-header-start.h
-# etc.).  Without it, transitive C code compiled by cc-rs (e.g. ring's curve25519.c)
-# fails with "fatal error: bits/libc-header-start.h: No such file or directory".
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3-dev && \
-    if [ "$TARGETARCH" = "arm64" ]; then \
-      apt-get install -y --no-install-recommends \
-        gcc-aarch64-linux-gnu \
-        libc6-dev-arm64-cross; \
-    fi && \
-    rm -rf /var/lib/apt/lists/*
+# For amd64: add the deadsnakes PPA and install Python 3.13 dev headers.
+# Ubuntu 24.04 ships Python 3.12 by default; 3.13 is pinned to match the CI
+# (PYO3_PYTHON=python3.13).  For arm64, cross_compile.py installs all Python 3.13
+# packages (including the deadsnakes PPA configuration), so we skip this step there
+# to avoid double-adding the PPA.
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
+      add-apt-repository -y ppa:deadsnakes/ppa && \
+      apt-get install -y --no-install-recommends python3.13 python3.13-dev && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Copy the cross-compilation helper script early so its layer is cached independently
+# from full source changes.
+COPY .github/scripts .github/scripts
+
+# For arm64: run the exact same cross-compilation setup script as GitHub Actions CI.
+# GITHUB_ENV is redirected to a local file so the env-var exports written by the script
+# (CARGO linker, PYO3_CROSS_PYTHON_VERSION, PYO3_CROSS_LIB_DIR) can be sourced in the
+# subsequent build step.  The script itself only uses the standard library and runs
+# fine on the system python3 (3.12); it sets up 3.13 ARM64 but does not require 3.13.
+RUN if [ "$TARGETARCH" = "arm64" ]; then \
+      GITHUB_ENV=/tmp/github_env python3 .github/scripts/cross_compile.py; \
+    fi
 
 COPY . .
 
 # Build with default features (includes Python/PyO3 support for plugins).
+# amd64: mirrors the CI "Set Python library path for linker" + PYO3_PYTHON steps.
+# arm64: sources the env file written by cross_compile.py before invoking cargo.
 RUN case "$TARGETARCH" in \
       "amd64") \
-        cargo build --release ;; \
+        PY_LIB=$(python3.13 -c "import sysconfig; print(sysconfig.get_config_var('LIBDIR'))") && \
+        LIBRARY_PATH="$PY_LIB" PYO3_PYTHON=python3.13 \
+          cargo build --release ;; \
       "arm64") \
+        set -a && . /tmp/github_env && set +a && \
         rustup target add aarch64-unknown-linux-gnu && \
-        CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-          cargo build --release \
-            --target aarch64-unknown-linux-gnu ;; \
+        cargo build --release --target aarch64-unknown-linux-gnu ;; \
       *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
     esac
 
@@ -45,12 +76,17 @@ RUN case "$TARGETARCH" in \
       "arm64") cp target/aarch64-unknown-linux-gnu/release/logmedic /tmp/logmedic ;; \
     esac
 
-# debian:12-slim includes glibc, libgcc, bash, and standard utilities – enough
-# to run the binary and drop into a shell for debugging.
-FROM debian:12-slim
+# Runtime image: Ubuntu 24.04 with Python 3.13 from the deadsnakes PPA.
+# The binary links dynamically against libpython3.13, so the runtime must provide it.
+# Ubuntu 24.04 ships Python 3.12 by default; deadsnakes is required for 3.13.
+FROM ubuntu:24.04
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends python3 libpython3-dev && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates software-properties-common && \
+    add-apt-repository -y ppa:deadsnakes/ppa && \
+    apt-get install -y --no-install-recommends \
+      python3.13 libpython3.13 && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/logmedic /logmedic
