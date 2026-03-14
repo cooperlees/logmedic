@@ -11,29 +11,30 @@ ARG TARGETARCH
 
 WORKDIR /usr/src/logmedic
 
-# Install the aarch64 cross-linker and ARM64 C library headers when targeting arm64.
+# Install Python dev headers for PyO3 embedding and cross-compilation tools.
 # libc6-dev-arm64-cross is required because gcc-aarch64-linux-gnu alone does not pull
 # in the ARM64 sysroot headers (/usr/aarch64-linux-gnu/include/bits/libc-header-start.h
 # etc.).  Without it, transitive C code compiled by cc-rs (e.g. ring's curve25519.c)
 # fails with "fatal error: bits/libc-header-start.h: No such file or directory".
-RUN if [ "$TARGETARCH" = "arm64" ]; then \
-      apt-get update && \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3-dev && \
+    if [ "$TARGETARCH" = "arm64" ]; then \
       apt-get install -y --no-install-recommends \
         gcc-aarch64-linux-gnu \
-        libc6-dev-arm64-cross && \
-      rm -rf /var/lib/apt/lists/*; \
-    fi
+        libc6-dev-arm64-cross; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY . .
 
-# Build without Python support so the binary has no runtime Python dependency.
+# Build with default features (includes Python/PyO3 support for plugins).
 RUN case "$TARGETARCH" in \
       "amd64") \
-        cargo build --release --no-default-features ;; \
+        cargo build --release ;; \
       "arm64") \
         rustup target add aarch64-unknown-linux-gnu && \
         CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
-          cargo build --release --no-default-features \
+          cargo build --release \
             --target aarch64-unknown-linux-gnu ;; \
       *) echo "Unsupported architecture: $TARGETARCH" && exit 1 ;; \
     esac
@@ -47,6 +48,10 @@ RUN case "$TARGETARCH" in \
 # debian:12-slim includes glibc, libgcc, bash, and standard utilities – enough
 # to run the binary and drop into a shell for debugging.
 FROM debian:12-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends python3 libpython3-dev && \
+    rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/logmedic /logmedic
 
