@@ -82,7 +82,8 @@ class DetectorPlugin:
         return anomalies
 
     def _default_query(self) -> str:
-        labels = self.extra_labels or "{}"
+        # Loki requires at least one label matcher; use a match-all if none configured
+        labels = self.extra_labels or '{__name__=~".+"}'
         return f'{labels} |~ "(?i)(error|warn|fatal|panic|exception)"'
 
     def _analyze(self, data: dict, threshold: int) -> list:
