@@ -20,13 +20,6 @@ pub enum Error {
 
     #[error("metrics initialization failed: {0}")]
     Metrics(#[from] prometheus::Error),
-
-    #[error("http server failed on {addr}: {source}")]
-    #[allow(dead_code)]
-    HttpServer {
-        addr: std::net::SocketAddr,
-        source: std::io::Error,
-    },
 }
 
 /// Errors specific to plugin loading and execution.

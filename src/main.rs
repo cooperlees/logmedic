@@ -5,7 +5,6 @@ mod metrics;
 mod plugin;
 mod remediate;
 
-use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 
@@ -59,11 +58,11 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Spawn HTTP server (/metrics + /healthz)
-    let http_addr: SocketAddr = ([0, 0, 0, 0], cfg.daemon.metrics_port).into();
     let registry = m.registry.clone();
     let health_clone = health.clone();
+    let metrics_port = cfg.daemon.metrics_port;
     tokio::spawn(async move {
-        if let Err(e) = metrics::serve_http(http_addr, registry, health_clone).await {
+        if let Err(e) = metrics::serve_http(metrics_port, registry, health_clone).await {
             error!(error = %e, "http server failed");
         }
     });

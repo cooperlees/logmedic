@@ -264,21 +264,33 @@ impl Metrics {
 }
 
 /// Spawn an HTTP server that serves /metrics and /healthz.
-pub async fn serve_http(
-    addr: std::net::SocketAddr,
-    registry: Registry,
-    health: Health,
-) -> anyhow::Result<()> {
+///
+/// Attempts to bind on `[::]:port` (dual-stack IPv4+IPv6) first, falling back
+/// to `0.0.0.0:port` (IPv4-only) if IPv6 is unavailable.
+pub async fn serve_http(port: u16, registry: Registry, health: Health) -> anyhow::Result<()> {
     use http_body_util::Full;
     use hyper::body::Bytes;
     use hyper::service::service_fn;
     use hyper::{Request, Response};
     use hyper_util::rt::TokioIo;
     use prometheus::Encoder;
+    use std::net::{Ipv6Addr, SocketAddr};
     use tokio::net::TcpListener;
 
-    let listener = TcpListener::bind(addr).await?;
-    tracing::info!(addr = %addr, "http server listening (/metrics, /healthz)");
+    let dual_stack_addr = SocketAddr::from((Ipv6Addr::UNSPECIFIED, port));
+    let listener = match TcpListener::bind(dual_stack_addr).await {
+        Ok(l) => {
+            tracing::info!(addr = %dual_stack_addr, "http server listening on IPv4+IPv6 (/metrics, /healthz)");
+            l
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to bind dual-stack [::], falling back to IPv4-only");
+            let v4_addr = SocketAddr::from(([0, 0, 0, 0], port));
+            let l = TcpListener::bind(v4_addr).await?;
+            tracing::info!(addr = %v4_addr, "http server listening on IPv4-only (/metrics, /healthz)");
+            l
+        }
+    };
 
     loop {
         let (stream, _) = listener.accept().await?;
