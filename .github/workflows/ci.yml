@@ -109,7 +109,7 @@ jobs:
         run: python -m unittest test_loki_detector -v
       - name: Test claude_remediator
         working-directory: plugins/claude_remediator
-        run: python -m unittest test_claude_remediator -v
+        run: python -m unittest test_claude_remediator test_github -v
 
   build-release:
     name: Build Release Binary

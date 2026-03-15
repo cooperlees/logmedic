@@ -236,12 +236,15 @@ class TestPropose(unittest.TestCase):
 class TestExecute(unittest.TestCase):
     """Test the execute() method which carries out proposed actions."""
 
-    @patch("claude_remediator.subprocess.run")
-    def test_execute_pr(self, mock_run):
-        """PR execution should clone, branch, commit, push, and create PR."""
-        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+    @patch("claude_remediator.github.create_pull_request")
+    def test_execute_pr(self, mock_create_pr):
+        """PR execution should call github.create_pull_request."""
+        mock_create_pr.return_value = {
+            "html_url": "https://github.com/cooperlees/clc_ansible/pull/42",
+            "number": 42,
+        }
 
-        plugin = RemediatorPlugin(_make_settings())
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test123"))
         action = {
             "description": "test",
             "kind": PR_ACTION["kind"],
@@ -251,13 +254,33 @@ class TestExecute(unittest.TestCase):
 
         self.assertIn("applied", result)
 
-        # Verify the expected git/gh commands were called
-        commands_run = [call[0][0] for call in mock_run.call_args_list]
-        # Should have: gh clone, git checkout, git add, git commit, git push, gh pr create
-        self.assertTrue(any("gh" in cmd and "clone" in cmd for cmd in commands_run))
-        self.assertTrue(any("git" in cmd and "checkout" in cmd for cmd in commands_run))
-        self.assertTrue(any("git" in cmd and "push" in cmd for cmd in commands_run))
-        self.assertTrue(any("gh" in cmd and "pr" in cmd for cmd in commands_run))
+        # Verify create_pull_request was called with correct args
+        mock_create_pr.assert_called_once_with(
+            token="ghp_test123",
+            repo="cooperlees/clc_ansible",
+            branch="fix/db-connection-pool",
+            title="fix: increase database connection pool size",
+            body="The API server is exhausting its connection pool under load.",
+            files=PR_ACTION["kind"]["pull_request"]["files_changed"],  # type: ignore[index]
+        )
+
+    @patch("claude_remediator.github.create_pull_request")
+    def test_execute_pr_api_failure(self, mock_create_pr):
+        """GitHub API error should return failed status."""
+        mock_create_pr.side_effect = RuntimeError(
+            "GitHub API GET /repos/x failed (404): not found"
+        )
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test123"))
+        action = {
+            "description": "test",
+            "kind": PR_ACTION["kind"],
+            "status": "proposed",
+        }
+        result = json.loads(plugin.execute(json.dumps(action)))
+
+        self.assertIn("failed", result)
+        self.assertIn("404", result["failed"]["reason"])
 
     def test_execute_report(self):
         """Report actions just echo the message back."""
@@ -336,6 +359,19 @@ class TestExecute(unittest.TestCase):
 
         self.assertIn("failed", result)
         self.assertIn("no repo", result["failed"]["reason"])
+
+    def test_execute_no_github_token(self):
+        """PR with no github_token → failure."""
+        plugin = RemediatorPlugin(_make_settings(github_token=""))
+        action = {
+            "description": "test",
+            "kind": PR_ACTION["kind"],
+            "status": "proposed",
+        }
+        result = json.loads(plugin.execute(json.dumps(action)))
+
+        self.assertIn("failed", result)
+        self.assertIn("github_token", result["failed"]["reason"])
 
     def test_execute_unknown_kind(self):
         """Unknown action kind → failure."""

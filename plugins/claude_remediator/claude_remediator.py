@@ -2,7 +2,7 @@
 Claude AI remediator plugin for logmedic.
 
 Uses the Anthropic Claude API to analyze log anomalies and propose fixes.
-Can raise PRs via GitHub CLI or SSH into hosts to apply fixes.
+Can raise PRs via the GitHub REST API or SSH into hosts to apply fixes.
 
 Settings (passed via TOML config):
     anthropic_api_key: str  - Anthropic API key
@@ -18,8 +18,9 @@ import json
 import logging
 import os
 import subprocess
-import tempfile
 from urllib.request import Request, urlopen
+
+import github
 
 log = logging.getLogger("logmedic.claude_remediator")
 
@@ -191,59 +192,35 @@ class RemediatorPlugin:
             ]
 
     def _execute_pr(self, pr: dict) -> dict:
-        """Create a PR using the GitHub CLI."""
+        """Create a PR using the GitHub REST API.
+
+        Delegates to the ``github`` module which uses the Git Data API to
+        create a commit on a new branch, then the Pulls API to open the PR.
+        No local git or gh CLI required.
+        """
         repo = pr.get("repo", self.default_repo)
         branch = pr.get("branch", "logmedic/auto-fix")
         title = pr.get("title", "logmedic: automated fix")
         body = pr.get("body", "")
         files = pr.get("files_changed", [])
 
-        log.debug(
-            "creating PR: repo=%s branch=%s title=%s files=%d",
-            repo,
-            branch,
-            title,
-            len(files),
-        )
-
         if not repo:
             log.error("no repo specified for PR creation")
             return {"failed": {"reason": "no repo specified"}}
 
+        if not self.github_token:
+            log.error("no github_token configured")
+            return {"failed": {"reason": "no github_token configured"}}
+
         try:
-            # Clone, branch, commit, push, create PR
-            with tempfile.TemporaryDirectory() as tmpdir:
-                log.debug("cloning %s into %s", repo, tmpdir)
-                self._run(["gh", "repo", "clone", repo, tmpdir])
-                self._run(["git", "checkout", "-b", branch], cwd=tmpdir)
-
-                for f in files:
-                    fpath = os.path.join(tmpdir, f["path"])
-                    os.makedirs(os.path.dirname(fpath), exist_ok=True)
-                    with open(fpath, "w") as fh:
-                        fh.write(f["content"])
-                    log.debug("wrote file %s", f["path"])
-
-                self._run(["git", "add", "-A"], cwd=tmpdir)
-                self._run(["git", "commit", "-m", title], cwd=tmpdir)
-                log.debug("pushing branch %s", branch)
-                self._run(["git", "push", "-u", "origin", branch], cwd=tmpdir)
-                self._run(
-                    [
-                        "gh",
-                        "pr",
-                        "create",
-                        "--repo",
-                        repo,
-                        "--title",
-                        title,
-                        "--body",
-                        body,
-                    ],
-                    cwd=tmpdir,
-                )
-
-            log.debug("PR created successfully")
+            github.create_pull_request(
+                token=self.github_token,
+                repo=repo,
+                branch=branch,
+                title=title,
+                body=body,
+                files=files,
+            )
             return {"applied": None}
         except Exception as e:
             log.error("PR creation failed: %s", e)
@@ -280,12 +257,3 @@ class RemediatorPlugin:
         except Exception as e:
             log.error("SSH execution error: %s", e)
             return {"failed": {"reason": str(e)}}
-
-    def _run(self, cmd: list, cwd: str | None = None) -> str:
-        log.debug("running: %s", " ".join(cmd))
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=cwd, timeout=60
-        )
-        if result.returncode != 0:
-            raise RuntimeError(f"command failed: {' '.join(cmd)}\n{result.stderr}")
-        return result.stdout
