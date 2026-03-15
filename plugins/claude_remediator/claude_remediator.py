@@ -15,10 +15,13 @@ Settings (passed via TOML config):
 """
 
 import json
+import logging
 import os
 import subprocess
 import tempfile
 from urllib.request import Request, urlopen
+
+log = logging.getLogger("logmedic.claude_remediator")
 
 
 class RemediatorPlugin:
@@ -31,6 +34,13 @@ class RemediatorPlugin:
         self.auto_execute = raw.get("auto_execute", False)
         self.ssh_key_path = raw.get("ssh_key_path", "")
         self.system_prompt = raw.get("system_prompt", "")
+        log.debug(
+            "initialized: model=%s default_repo=%s auto_execute=%s api_key=%s",
+            self.model,
+            self.default_repo or "(none)",
+            self.auto_execute,
+            "set" if self.api_key else "MISSING",
+        )
 
     def name(self) -> str:
         return "claude_remediator"
@@ -39,28 +49,37 @@ class RemediatorPlugin:
         """Send anomalies to Claude and get back proposed remediation actions."""
         anomalies = json.loads(anomalies_json)
         if not anomalies:
+            log.debug("no anomalies to propose on, returning empty")
             return "[]"
 
+        log.debug("proposing remediations for %d anomalies", len(anomalies))
         system = self._build_system_prompt()
         user_msg = self._build_user_prompt(anomalies)
+        log.debug("system prompt length=%d, user prompt length=%d", len(system), len(user_msg))
 
         response = self._call_claude(system, user_msg)
+        log.debug("claude response length=%d", len(response))
         actions = self._parse_response(response)
+        log.debug("parsed %d actions from response", len(actions))
         return json.dumps(actions)
 
     def execute(self, action_json: str) -> str:
         """Execute a proposed remediation action."""
         action = json.loads(action_json)
         kind = action.get("kind", {})
+        log.debug("executing action: description=%s kind_keys=%s", action.get("description", "?"), list(kind.keys()))
 
         if "pull_request" in kind:
-            return json.dumps(self._execute_pr(kind["pull_request"]))
+            result = self._execute_pr(kind["pull_request"])
         elif "ssh_command" in kind:
-            return json.dumps(self._execute_ssh(kind["ssh_command"]))
+            result = self._execute_ssh(kind["ssh_command"])
         elif "report" in kind:
-            return json.dumps({"report": {"message": kind["report"]["message"]}})
+            result = {"report": {"message": kind["report"]["message"]}}
         else:
-            return json.dumps({"failed": {"reason": "unknown action kind"}})
+            result = {"failed": {"reason": "unknown action kind"}}
+
+        log.debug("execute result: %s", list(result.keys()))
+        return json.dumps(result)
 
     def _build_system_prompt(self) -> str:
         base = (
@@ -101,6 +120,7 @@ class RemediatorPlugin:
 
     def _call_claude(self, system: str, user_msg: str) -> str:
         """Call the Anthropic Messages API."""
+        log.debug("calling Claude API: model=%s", self.model)
         payload = json.dumps({
             "model": self.model,
             "max_tokens": 4096,
@@ -122,6 +142,13 @@ class RemediatorPlugin:
         with urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read())
 
+        log.debug(
+            "Claude API response: model=%s usage=%s stop_reason=%s",
+            data.get("model", "?"),
+            data.get("usage", {}),
+            data.get("stop_reason", "?"),
+        )
+
         # Extract text from response
         text = ""
         for block in data.get("content", []):
@@ -137,8 +164,12 @@ class RemediatorPlugin:
             if cleaned.startswith("```"):
                 lines = cleaned.split("\n")
                 cleaned = "\n".join(lines[1:-1])
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
+            actions = json.loads(cleaned)
+            log.debug("successfully parsed %d actions from Claude response", len(actions))
+            return actions
+        except json.JSONDecodeError as e:
+            log.error("failed to parse Claude response as JSON: %s", e)
+            log.debug("raw response: %.500s", response)
             return [{
                 "description": "Claude response parsing failed",
                 "kind": {"report": {"message": response}},
@@ -153,12 +184,16 @@ class RemediatorPlugin:
         body = pr.get("body", "")
         files = pr.get("files_changed", [])
 
+        log.debug("creating PR: repo=%s branch=%s title=%s files=%d", repo, branch, title, len(files))
+
         if not repo:
+            log.error("no repo specified for PR creation")
             return {"failed": {"reason": "no repo specified"}}
 
         try:
             # Clone, branch, commit, push, create PR
             with tempfile.TemporaryDirectory() as tmpdir:
+                log.debug("cloning %s into %s", repo, tmpdir)
                 self._run(["gh", "repo", "clone", repo, tmpdir])
                 self._run(["git", "checkout", "-b", branch], cwd=tmpdir)
 
@@ -167,9 +202,11 @@ class RemediatorPlugin:
                     os.makedirs(os.path.dirname(fpath), exist_ok=True)
                     with open(fpath, "w") as fh:
                         fh.write(f["content"])
+                    log.debug("wrote file %s", f["path"])
 
                 self._run(["git", "add", "-A"], cwd=tmpdir)
                 self._run(["git", "commit", "-m", title], cwd=tmpdir)
+                log.debug("pushing branch %s", branch)
                 self._run(["git", "push", "-u", "origin", branch], cwd=tmpdir)
                 self._run([
                     "gh", "pr", "create",
@@ -178,8 +215,10 @@ class RemediatorPlugin:
                     "--body", body,
                 ], cwd=tmpdir)
 
+            log.debug("PR created successfully")
             return {"applied": None}
         except Exception as e:
+            log.error("PR creation failed: %s", e)
             return {"failed": {"reason": str(e)}}
 
     def _execute_ssh(self, ssh: dict) -> dict:
@@ -188,8 +227,10 @@ class RemediatorPlugin:
         commands = ssh.get("commands", [])
 
         if not host or not commands:
+            log.error("missing host or commands for SSH execution")
             return {"failed": {"reason": "missing host or commands"}}
 
+        log.debug("SSH executing on %s: %d commands", host, len(commands))
         try:
             ssh_args = ["ssh"]
             if self.ssh_key_path:
@@ -198,17 +239,22 @@ class RemediatorPlugin:
 
             combined = " && ".join(commands)
             ssh_args.append(combined)
+            log.debug("ssh command: %s", " ".join(ssh_args))
 
             result = subprocess.run(
                 ssh_args, capture_output=True, text=True, timeout=120
             )
             if result.returncode != 0:
+                log.error("SSH failed (rc=%d): %s", result.returncode, result.stderr)
                 return {"failed": {"reason": f"ssh failed: {result.stderr}"}}
+            log.debug("SSH completed successfully")
             return {"applied": None}
         except Exception as e:
+            log.error("SSH execution error: %s", e)
             return {"failed": {"reason": str(e)}}
 
     def _run(self, cmd: list, cwd: str = None) -> str:
+        log.debug("running: %s", " ".join(cmd))
         result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=60)
         if result.returncode != 0:
             raise RuntimeError(f"command failed: {' '.join(cmd)}\n{result.stderr}")

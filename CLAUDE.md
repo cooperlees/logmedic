@@ -40,3 +40,8 @@ When building with Python: Python 3.13 must be installed with development header
 ## CI
 
 GitHub Actions (`.github/workflows/ci.yml`): fmt → clippy → test → build-release (x86_64 Linux, aarch64 Linux on ARM runner, aarch64 macOS, x86_64 Windows). All jobs pin Python 3.13.
+
+## Claude tips
+
+- Always prefer IPv6
+- Please do appropriaate logging to make debugging easier. Focus on info, warnings and debug info

@@ -6,7 +6,7 @@ mod plugin;
 mod remediate;
 
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::remediate::ActionKind;
 
@@ -27,7 +27,17 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "logmedic.toml".to_string());
 
     info!(config = %config_path, "starting logmedic daemon");
+    debug!("loading configuration from {config_path}");
     let cfg = config::load_config(&config_path)?;
+    debug!(
+        poll_interval = cfg.daemon.poll_interval_secs,
+        threshold = cfg.daemon.frequency_threshold,
+        lookback = %cfg.daemon.lookback,
+        metrics_port = cfg.daemon.metrics_port,
+        detectors = cfg.plugins.len(),
+        remediators = cfg.remediators.len(),
+        "configuration loaded"
+    );
 
     // Initialize metrics
     let m = metrics::Metrics::new()?;
@@ -75,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
         // Phase 1: Detect anomalies from all detector plugins
         let mut all_anomalies = Vec::new();
         for detector in &detectors {
+            debug!(detector = detector.name(), "starting detection");
             m.detector_runs_total
                 .with_label_values(&[detector.name()])
                 .inc();
@@ -90,6 +101,17 @@ async fn main() -> anyhow::Result<()> {
                         anomalies = count,
                         "detection complete"
                     );
+                    for anomaly in &anomalies {
+                        debug!(
+                            detector = detector.name(),
+                            pattern = %anomaly.pattern,
+                            count = anomaly.count,
+                            level = ?anomaly.level,
+                            labels = ?anomaly.labels,
+                            samples = anomaly.samples.len(),
+                            "anomaly detail"
+                        );
+                    }
                     m.anomalies_detected_total
                         .with_label_values(&[detector.name()])
                         .inc_by(count as u64);
@@ -130,6 +152,11 @@ async fn main() -> anyhow::Result<()> {
 
             // Phase 2: Propose remediations
             for remediator in &remediators {
+                debug!(
+                    remediator = remediator.name(),
+                    anomalies = all_anomalies.len(),
+                    "sending anomalies for proposal"
+                );
                 match remediator.propose(&all_anomalies).await {
                     Ok(actions) => {
                         info!(
@@ -155,6 +182,11 @@ async fn main() -> anyhow::Result<()> {
 
                         // Phase 3: Execute proposed actions
                         for action in &actions {
+                            debug!(
+                                remediator = remediator.name(),
+                                description = %action.description,
+                                "executing action"
+                            );
                             info!(
                                 remediator = remediator.name(),
                                 action = %action.description,
@@ -204,9 +236,15 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        let elapsed = cycle_start.elapsed();
         m.detection_cycle_duration_seconds
-            .observe(cycle_start.elapsed().as_secs_f64());
+            .observe(elapsed.as_secs_f64());
+        debug!(elapsed_ms = elapsed.as_millis(), "detection cycle complete");
 
+        debug!(
+            sleep_secs = cfg.daemon.poll_interval_secs,
+            "sleeping until next cycle"
+        );
         tokio::time::sleep(Duration::from_secs(cfg.daemon.poll_interval_secs)).await;
     }
 }

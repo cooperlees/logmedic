@@ -1,4 +1,5 @@
 use libloading::{Library, Symbol};
+use tracing::debug;
 
 use crate::config::{PluginConfig, RemediatorConfig};
 use crate::detect::Detector;
@@ -14,6 +15,7 @@ type CreateDetectorFn = unsafe fn(settings: &str) -> Box<dyn Detector>;
 type CreateRemediatorFn = unsafe fn(settings: &str) -> Box<dyn Remediator>;
 
 pub fn load_native_detector(cfg: &PluginConfig) -> Result<Box<dyn Detector>, PluginError> {
+    debug!(plugin = %cfg.name, path = %cfg.path.display(), "loading native detector library");
     let settings_json = serde_json::to_string(&cfg.settings).map_err(|e| {
         PluginError::SettingsSerializationFailed {
             name: cfg.name.clone(),
@@ -37,6 +39,7 @@ pub fn load_native_detector(cfg: &PluginConfig) -> Result<Box<dyn Detector>, Plu
         let detector = create(&settings_json);
         // Leak the library so it stays loaded for the process lifetime
         std::mem::forget(lib);
+        debug!(plugin = %cfg.name, "native detector library loaded and symbol resolved");
         Ok(detector)
     }
 }
@@ -55,6 +58,7 @@ pub fn load_native_remediator(cfg: &RemediatorConfig) -> Result<Box<dyn Remediat
         .ok_or_else(|| PluginError::MissingPluginPath {
             name: cfg.name.clone(),
         })?;
+    debug!(remediator = %cfg.name, path, "loading native remediator library");
     unsafe {
         let lib = Library::new(path).map_err(|e| PluginError::NativeLoadFailed {
             name: cfg.name.clone(),
@@ -71,6 +75,7 @@ pub fn load_native_remediator(cfg: &RemediatorConfig) -> Result<Box<dyn Remediat
                 })?;
         let remediator = create(&settings_json);
         std::mem::forget(lib);
+        debug!(remediator = %cfg.name, "native remediator library loaded and symbol resolved");
         Ok(remediator)
     }
 }

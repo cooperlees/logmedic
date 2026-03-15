@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{IntoPyDict, PyDict};
+use tracing::debug;
 
 use crate::config::{PluginConfig, RemediatorConfig};
 use crate::detect::{Detector, LogAnomaly, LogLevel};
@@ -23,11 +24,77 @@ fn module_stem(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+/// Map the RUST_LOG level to a Python logging level and configure Python's
+/// root logger so that plugin log output matches the daemon's verbosity.
+fn configure_python_logging(py: Python<'_>, plugin_name: &str) -> Result<(), PluginError> {
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_default().to_lowercase();
+    // Python has no TRACE level; map both trace and debug to DEBUG
+    let py_level = if rust_log.contains("trace") || rust_log.contains("debug") {
+        "DEBUG"
+    } else if rust_log.contains("warn") {
+        "WARNING"
+    } else if rust_log.contains("error") {
+        "ERROR"
+    } else {
+        "INFO"
+    };
+
+    let logging = py
+        .import_bound("logging")
+        .map_err(|e| PluginError::PythonImportFailed {
+            name: plugin_name.to_string(),
+            path: "logging".to_string(),
+            module: "logging".to_string(),
+            detail: e.to_string(),
+        })?;
+
+    // basicConfig is idempotent after the first call, so only the first
+    // plugin's invocation takes effect (which is fine — they all share the
+    // same desired level).
+    logging
+        .call_method(
+            "basicConfig",
+            (),
+            Some(
+                &[
+                    (
+                        "level",
+                        logging.getattr(py_level).map_err(|e| {
+                            PluginError::PythonMethodCallFailed {
+                                name: plugin_name.to_string(),
+                                class: "logging".to_string(),
+                                method: "basicConfig".to_string(),
+                                expected_signature: "basicConfig(level=...)".to_string(),
+                                detail: e.to_string(),
+                            }
+                        })?,
+                    ),
+                    (
+                        "format",
+                        pyo3::types::PyString::new_bound(py, "%(name)s %(levelname)s %(message)s")
+                            .into_any(),
+                    ),
+                ]
+                .into_py_dict_bound(py),
+            ),
+        )
+        .map_err(|e| PluginError::PythonMethodCallFailed {
+            name: plugin_name.to_string(),
+            class: "logging".to_string(),
+            method: "basicConfig".to_string(),
+            expected_signature: "basicConfig(level=..., format=...)".to_string(),
+            detail: e.to_string(),
+        })?;
+
+    Ok(())
+}
+
 fn setup_sys_path<'py>(
     py: Python<'py>,
     plugin_name: &str,
     plugin_path: &str,
 ) -> Result<(), PluginError> {
+    configure_python_logging(py, plugin_name)?;
     let sys = py
         .import_bound("sys")
         .map_err(|e| PluginError::PythonSysPathError {
@@ -67,10 +134,12 @@ struct PythonDetector {
 
 impl PythonDetector {
     fn call_detect(&self, lookback: &str, threshold: u64) -> Result<Vec<LogAnomaly>, PluginError> {
+        debug!(plugin = %self.plugin_name, lookback, threshold, "calling Python detect()");
         Python::with_gil(|py| {
             setup_sys_path(py, &self.plugin_name, &self.module_path)?;
 
             let stem = module_stem(&self.module_path);
+            debug!(plugin = %self.plugin_name, module = %stem, "importing Python module");
             let module =
                 py.import_bound(stem.as_str())
                     .map_err(|e| PluginError::PythonImportFailed {
@@ -127,6 +196,7 @@ impl PythonDetector {
             for (i, d) in dicts.iter().enumerate() {
                 anomalies.push(parse_anomaly_dict(&self.plugin_name, i, d)?);
             }
+            debug!(plugin = %self.plugin_name, count = anomalies.len(), "Python detect() returned");
             Ok(anomalies)
         })
     }
@@ -253,6 +323,7 @@ struct PythonRemediator {
 
 impl PythonRemediator {
     fn call_propose(&self, anomalies_json: &str) -> Result<Vec<RemediationAction>, PluginError> {
+        debug!(plugin = %self.plugin_name, anomalies_len = anomalies_json.len(), "calling Python propose()");
         Python::with_gil(|py| {
             let plugin = self.instantiate(py, "RemediatorPlugin")?;
             let result = plugin
@@ -282,11 +353,13 @@ impl PythonRemediator {
                         source: e,
                     }
                 })?;
+            debug!(plugin = %self.plugin_name, actions = actions.len(), "Python propose() returned");
             Ok(actions)
         })
     }
 
     fn call_execute(&self, action_json: &str) -> Result<ActionStatus, PluginError> {
+        debug!(plugin = %self.plugin_name, "calling Python execute()");
         Python::with_gil(|py| {
             let plugin = self.instantiate(py, "RemediatorPlugin")?;
             let result = plugin
@@ -315,6 +388,7 @@ impl PythonRemediator {
                     source: e,
                 }
             })?;
+            debug!(plugin = %self.plugin_name, status = ?status, "Python execute() returned");
             Ok(status)
         })
     }

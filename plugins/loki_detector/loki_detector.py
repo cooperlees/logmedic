@@ -12,9 +12,12 @@ Settings (passed via TOML config):
 """
 
 import json
+import logging
 from collections import Counter
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
+
+log = logging.getLogger("logmedic.loki_detector")
 
 
 class DetectorPlugin:
@@ -24,6 +27,13 @@ class DetectorPlugin:
         self.org_id = raw.get("org_id", "")
         self.extra_labels = raw.get("extra_labels", "")
         self.custom_query = raw.get("query", "")
+        log.debug(
+            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s",
+            self.loki_url,
+            self.org_id or "(none)",
+            self.extra_labels or "(none)",
+            self.custom_query or "(default)",
+        )
 
     def name(self) -> str:
         return "loki_detector"
@@ -31,6 +41,7 @@ class DetectorPlugin:
     def detect(self, lookback: str, threshold: int) -> list:
         """Query Loki and return high-frequency error/warning patterns."""
         query = self.custom_query or self._default_query()
+        log.debug("detect called: lookback=%s threshold=%d query=%s", lookback, threshold, query)
 
         params = urlencode({
             "query": query,
@@ -39,6 +50,7 @@ class DetectorPlugin:
             "direction": "backward",
         })
         url = f"{self.loki_url}/loki/api/v1/query_range?{params}"
+        log.debug("requesting %s", url)
 
         headers = {"Accept": "application/json"}
         if self.org_id:
@@ -48,11 +60,19 @@ class DetectorPlugin:
         try:
             with urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read())
+                log.debug(
+                    "loki response: status=%s resultType=%s streams=%d",
+                    resp.status,
+                    data.get("data", {}).get("resultType", "?"),
+                    len(data.get("data", {}).get("result", [])),
+                )
         except Exception as e:
-            print(f"[loki_detector] query failed: {e}")
+            log.error("query failed: %s", e)
             return []
 
-        return self._analyze(data, threshold)
+        anomalies = self._analyze(data, threshold)
+        log.debug("analysis complete: %d anomalies above threshold", len(anomalies))
+        return anomalies
 
     def _default_query(self) -> str:
         labels = self.extra_labels or '{}'
@@ -67,10 +87,12 @@ class DetectorPlugin:
         status = data.get("data", {}).get("resultType", "")
         results = data.get("data", {}).get("result", [])
 
+        total_lines = 0
         for stream in results:
             stream_labels = stream.get("stream", {})
             values = stream.get("values", [])
             for _ts, line in values:
+                total_lines += 1
                 # Simple pattern: normalize numbers and UUIDs
                 pattern = self._normalize(line)
                 line_counter[pattern] += 1
@@ -79,6 +101,13 @@ class DetectorPlugin:
                     labels_map[pattern] = stream_labels
                 if len(samples_map[pattern]) < 3:
                     samples_map[pattern].append(line)
+
+        log.debug(
+            "processed %d log lines across %d streams, %d unique patterns",
+            total_lines,
+            len(results),
+            len(line_counter),
+        )
 
         anomalies = []
         for pattern, count in line_counter.most_common():
@@ -92,6 +121,7 @@ class DetectorPlugin:
                 "labels": labels_map.get(pattern, {}),
                 "samples": samples_map.get(pattern, []),
             })
+            log.debug("anomaly: count=%d level=%s pattern=%.120s", count, level, pattern)
 
         return anomalies
 
