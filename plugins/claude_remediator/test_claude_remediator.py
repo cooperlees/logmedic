@@ -38,15 +38,17 @@ SAMPLE_ANOMALIES = [
 
 def _claude_api_response(actions_json):
     """Build a mock Anthropic Messages API response."""
-    return json.dumps({
-        "id": "msg_test_123",
-        "type": "message",
-        "role": "assistant",
-        "model": "claude-sonnet-4-20250514",
-        "content": [{"type": "text", "text": actions_json}],
-        "stop_reason": "end_turn",
-        "usage": {"input_tokens": 500, "output_tokens": 200},
-    }).encode()
+    return json.dumps(
+        {
+            "id": "msg_test_123",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-sonnet-4-20250514",
+            "content": [{"type": "text", "text": actions_json}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 500, "output_tokens": 200},
+        }
+    ).encode()
 
 
 # The kind of JSON Claude would return for a PR-based fix
@@ -124,7 +126,9 @@ class TestPropose(unittest.TestCase):
 
         self.assertEqual(len(result), 1)
         action = result[0]
-        self.assertEqual(action["description"], "Fix database connection pool configuration")
+        self.assertEqual(
+            action["description"], "Fix database connection pool configuration"
+        )
         self.assertIn("pull_request", action["kind"])
         pr = action["kind"]["pull_request"]
         self.assertEqual(pr["repo"], "cooperlees/clc_ansible")
@@ -238,7 +242,11 @@ class TestExecute(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
         plugin = RemediatorPlugin(_make_settings())
-        action = {"description": "test", "kind": PR_ACTION["kind"], "status": "proposed"}
+        action = {
+            "description": "test",
+            "kind": PR_ACTION["kind"],
+            "status": "proposed",
+        }
         result = json.loads(plugin.execute(json.dumps(action)))
 
         self.assertIn("applied", result)
@@ -254,7 +262,11 @@ class TestExecute(unittest.TestCase):
     def test_execute_report(self):
         """Report actions just echo the message back."""
         plugin = RemediatorPlugin(_make_settings())
-        action = {"description": "test", "kind": REPORT_ACTION["kind"], "status": "proposed"}
+        action = {
+            "description": "test",
+            "kind": REPORT_ACTION["kind"],
+            "status": "proposed",
+        }
         result = json.loads(plugin.execute(json.dumps(action)))
 
         self.assertIn("report", result)
@@ -268,7 +280,12 @@ class TestExecute(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings(ssh_key_path="/tmp/test_key"))
         action = {
             "description": "restart service",
-            "kind": {"ssh_command": {"host": "web-1.prod", "commands": ["systemctl restart api"]}},
+            "kind": {
+                "ssh_command": {
+                    "host": "web-1.prod",
+                    "commands": ["systemctl restart api"],
+                }
+            },
             "status": "proposed",
         }
         result = json.loads(plugin.execute(json.dumps(action)))
@@ -290,7 +307,9 @@ class TestExecute(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings())
         action = {
             "description": "restart",
-            "kind": {"ssh_command": {"host": "web-1", "commands": ["systemctl restart api"]}},
+            "kind": {
+                "ssh_command": {"host": "web-1", "commands": ["systemctl restart api"]}
+            },
             "status": "proposed",
         }
         result = json.loads(plugin.execute(json.dumps(action)))
@@ -303,7 +322,14 @@ class TestExecute(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings(default_repo=""))
         action = {
             "description": "test",
-            "kind": {"pull_request": {"branch": "fix/x", "title": "t", "body": "b", "files_changed": []}},
+            "kind": {
+                "pull_request": {
+                    "branch": "fix/x",
+                    "title": "t",
+                    "body": "b",
+                    "files_changed": [],
+                }
+            },
             "status": "proposed",
         }
         result = json.loads(plugin.execute(json.dumps(action)))
@@ -346,9 +372,9 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("ssh_command", prompt)
 
     def test_system_prompt_includes_custom_context(self):
-        plugin = RemediatorPlugin(_make_settings(
-            system_prompt="We use Ansible for all config management."
-        ))
+        plugin = RemediatorPlugin(
+            _make_settings(system_prompt="We use Ansible for all config management.")
+        )
         prompt = plugin._build_system_prompt()
         self.assertIn("Ansible", prompt)
 

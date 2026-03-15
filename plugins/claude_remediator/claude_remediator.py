@@ -27,7 +27,9 @@ log = logging.getLogger("logmedic.claude_remediator")
 class RemediatorPlugin:
     def __init__(self, settings: dict):
         raw = json.loads(settings.get("settings_json", "{}"))
-        self.api_key = raw.get("anthropic_api_key", os.environ.get("ANTHROPIC_API_KEY", ""))
+        self.api_key = raw.get(
+            "anthropic_api_key", os.environ.get("ANTHROPIC_API_KEY", "")
+        )
         self.model = raw.get("model", "claude-sonnet-4-20250514")
         self.github_token = raw.get("github_token", os.environ.get("GITHUB_TOKEN", ""))
         self.default_repo = raw.get("default_repo", "")
@@ -55,7 +57,9 @@ class RemediatorPlugin:
         log.debug("proposing remediations for %d anomalies", len(anomalies))
         system = self._build_system_prompt()
         user_msg = self._build_user_prompt(anomalies)
-        log.debug("system prompt length=%d, user prompt length=%d", len(system), len(user_msg))
+        log.debug(
+            "system prompt length=%d, user prompt length=%d", len(system), len(user_msg)
+        )
 
         response = self._call_claude(system, user_msg)
         log.debug("claude response length=%d", len(response))
@@ -67,7 +71,11 @@ class RemediatorPlugin:
         """Execute a proposed remediation action."""
         action = json.loads(action_json)
         kind = action.get("kind", {})
-        log.debug("executing action: description=%s kind_keys=%s", action.get("description", "?"), list(kind.keys()))
+        log.debug(
+            "executing action: description=%s kind_keys=%s",
+            action.get("description", "?"),
+            list(kind.keys()),
+        )
 
         if "pull_request" in kind:
             result = self._execute_pr(kind["pull_request"])
@@ -121,12 +129,14 @@ class RemediatorPlugin:
     def _call_claude(self, system: str, user_msg: str) -> str:
         """Call the Anthropic Messages API."""
         log.debug("calling Claude API: model=%s", self.model)
-        payload = json.dumps({
-            "model": self.model,
-            "max_tokens": 4096,
-            "system": system,
-            "messages": [{"role": "user", "content": user_msg}],
-        }).encode()
+        payload = json.dumps(
+            {
+                "model": self.model,
+                "max_tokens": 4096,
+                "system": system,
+                "messages": [{"role": "user", "content": user_msg}],
+            }
+        ).encode()
 
         req = Request(
             "https://api.anthropic.com/v1/messages",
@@ -165,16 +175,20 @@ class RemediatorPlugin:
                 lines = cleaned.split("\n")
                 cleaned = "\n".join(lines[1:-1])
             actions = json.loads(cleaned)
-            log.debug("successfully parsed %d actions from Claude response", len(actions))
+            log.debug(
+                "successfully parsed %d actions from Claude response", len(actions)
+            )
             return actions
         except json.JSONDecodeError as e:
             log.error("failed to parse Claude response as JSON: %s", e)
             log.debug("raw response: %.500s", response)
-            return [{
-                "description": "Claude response parsing failed",
-                "kind": {"report": {"message": response}},
-                "status": "proposed",
-            }]
+            return [
+                {
+                    "description": "Claude response parsing failed",
+                    "kind": {"report": {"message": response}},
+                    "status": "proposed",
+                }
+            ]
 
     def _execute_pr(self, pr: dict) -> dict:
         """Create a PR using the GitHub CLI."""
@@ -184,7 +198,13 @@ class RemediatorPlugin:
         body = pr.get("body", "")
         files = pr.get("files_changed", [])
 
-        log.debug("creating PR: repo=%s branch=%s title=%s files=%d", repo, branch, title, len(files))
+        log.debug(
+            "creating PR: repo=%s branch=%s title=%s files=%d",
+            repo,
+            branch,
+            title,
+            len(files),
+        )
 
         if not repo:
             log.error("no repo specified for PR creation")
@@ -208,12 +228,20 @@ class RemediatorPlugin:
                 self._run(["git", "commit", "-m", title], cwd=tmpdir)
                 log.debug("pushing branch %s", branch)
                 self._run(["git", "push", "-u", "origin", branch], cwd=tmpdir)
-                self._run([
-                    "gh", "pr", "create",
-                    "--repo", repo,
-                    "--title", title,
-                    "--body", body,
-                ], cwd=tmpdir)
+                self._run(
+                    [
+                        "gh",
+                        "pr",
+                        "create",
+                        "--repo",
+                        repo,
+                        "--title",
+                        title,
+                        "--body",
+                        body,
+                    ],
+                    cwd=tmpdir,
+                )
 
             log.debug("PR created successfully")
             return {"applied": None}
@@ -253,9 +281,11 @@ class RemediatorPlugin:
             log.error("SSH execution error: %s", e)
             return {"failed": {"reason": str(e)}}
 
-    def _run(self, cmd: list, cwd: str = None) -> str:
+    def _run(self, cmd: list, cwd: str | None = None) -> str:
         log.debug("running: %s", " ".join(cmd))
-        result = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=60)
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, cwd=cwd, timeout=60
+        )
         if result.returncode != 0:
             raise RuntimeError(f"command failed: {' '.join(cmd)}\n{result.stderr}")
         return result.stdout

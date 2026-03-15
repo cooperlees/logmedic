@@ -37,9 +37,27 @@ When building with Python: Python 3.13 must be installed with development header
 
 **Config** (`src/config/mod.rs`): TOML-based. `[daemon]` for poll interval/threshold/lookback/port, `[[plugins]]` for detectors, `[[remediators]]` for remediators. Plugin settings are arbitrary `toml::Table` values serialized to JSON for plugins.
 
+## Python Plugin Development
+
+```bash
+# Create a temporary venv with uv for linting/type-checking tools
+python3 -m venv --upgrade-deps /tmp/tl && /tmp/tl/bin/pip install uv
+
+# Lint & format
+/tmp/tl/bin/uvx ruff check plugins/
+/tmp/tl/bin/uvx ruff format --check plugins/   # add --no-check to auto-format
+
+# Type check
+/tmp/tl/bin/uvx ty check plugins/
+
+# Unit tests (no dependencies needed — stdlib unittest + unittest.mock)
+python3 -m unittest discover -s plugins/loki_detector -v
+python3 -m unittest discover -s plugins/claude_remediator -v
+```
+
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`): fmt → clippy → test → build-release (x86_64 Linux, aarch64 Linux on ARM runner, aarch64 macOS, x86_64 Windows). All jobs pin Python 3.13.
+GitHub Actions (`.github/workflows/ci.yml`): fmt → clippy → test → build-release (x86_64 Linux, aarch64 Linux on ARM runner, aarch64 macOS, x86_64 Windows). Python plugin checks (ruff, ty, unittest) run when `plugins/**/*.py` changes. All jobs pin Python 3.13.
 
 ## Claude tips
 

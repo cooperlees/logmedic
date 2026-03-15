@@ -22,6 +22,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       python: ${{ steps.filter.outputs.python }}
+      plugins: ${{ steps.filter.outputs.plugins }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -30,6 +31,8 @@ jobs:
           filters: |
             python:
               - '.github/scripts/**/*.py'
+            plugins:
+              - 'plugins/**/*.py'
 
   fmt:
     name: Format
@@ -84,10 +87,34 @@ jobs:
       - run: uvx ruff format --check .github/scripts/cross_compile.py
       - run: uvx ty check .github/scripts/cross_compile.py
 
+  python-plugin-checks:
+    name: Python Plugin Checks
+    needs: [changes]
+    if: needs.changes.outputs.plugins == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v4
+      - name: Lint
+        run: uvx ruff check plugins/
+      - name: Format
+        run: uvx ruff format --check plugins/
+      - name: Type check
+        run: uvx ty check plugins/
+      - name: Test loki_detector
+        working-directory: plugins/loki_detector
+        run: python -m unittest test_loki_detector -v
+      - name: Test claude_remediator
+        working-directory: plugins/claude_remediator
+        run: python -m unittest test_claude_remediator -v
+
   build-release:
     name: Build Release Binary
-    needs: [fmt, clippy, test, python-cross-compile-checks]
-    if: ${{ always() && needs.fmt.result == 'success' && needs.clippy.result == 'success' && needs.test.result == 'success' && (needs.python-cross-compile-checks.result == 'success' || needs.python-cross-compile-checks.result == 'skipped') }}
+    needs: [fmt, clippy, test, python-cross-compile-checks, python-plugin-checks]
+    if: ${{ always() && needs.fmt.result == 'success' && needs.clippy.result == 'success' && needs.test.result == 'success' && (needs.python-cross-compile-checks.result == 'success' || needs.python-cross-compile-checks.result == 'skipped') && (needs.python-plugin-checks.result == 'success' || needs.python-plugin-checks.result == 'skipped') }}
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:

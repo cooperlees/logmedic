@@ -41,14 +41,21 @@ class DetectorPlugin:
     def detect(self, lookback: str, threshold: int) -> list:
         """Query Loki and return high-frequency error/warning patterns."""
         query = self.custom_query or self._default_query()
-        log.debug("detect called: lookback=%s threshold=%d query=%s", lookback, threshold, query)
+        log.debug(
+            "detect called: lookback=%s threshold=%d query=%s",
+            lookback,
+            threshold,
+            query,
+        )
 
-        params = urlencode({
-            "query": query,
-            "since": lookback,
-            "limit": "5000",
-            "direction": "backward",
-        })
+        params = urlencode(
+            {
+                "query": query,
+                "since": lookback,
+                "limit": "5000",
+                "direction": "backward",
+            }
+        )
         url = f"{self.loki_url}/loki/api/v1/query_range?{params}"
         log.debug("requesting %s", url)
 
@@ -75,7 +82,7 @@ class DetectorPlugin:
         return anomalies
 
     def _default_query(self) -> str:
-        labels = self.extra_labels or '{}'
+        labels = self.extra_labels or "{}"
         return f'{labels} |~ "(?i)(error|warn|fatal|panic|exception)"'
 
     def _analyze(self, data: dict, threshold: int) -> list:
@@ -84,7 +91,6 @@ class DetectorPlugin:
         samples_map = {}
         labels_map = {}
 
-        status = data.get("data", {}).get("resultType", "")
         results = data.get("data", {}).get("result", [])
 
         total_lines = 0
@@ -114,31 +120,38 @@ class DetectorPlugin:
             if count < threshold:
                 break
             level = self._guess_level(pattern)
-            anomalies.append({
-                "pattern": pattern,
-                "count": count,
-                "level": level,
-                "labels": labels_map.get(pattern, {}),
-                "samples": samples_map.get(pattern, []),
-            })
-            log.debug("anomaly: count=%d level=%s pattern=%.120s", count, level, pattern)
+            anomalies.append(
+                {
+                    "pattern": pattern,
+                    "count": count,
+                    "level": level,
+                    "labels": labels_map.get(pattern, {}),
+                    "samples": samples_map.get(pattern, []),
+                }
+            )
+            log.debug(
+                "anomaly: count=%d level=%s pattern=%.120s", count, level, pattern
+            )
 
         return anomalies
 
     def _normalize(self, line: str) -> str:
         """Collapse variable parts of log lines into placeholders."""
         import re
+
         # Replace UUIDs
         line = re.sub(
-            r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}',
-            '<UUID>', line, flags=re.IGNORECASE
+            r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            "<UUID>",
+            line,
+            flags=re.IGNORECASE,
         )
         # Replace IP addresses
-        line = re.sub(r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}', '<IP>', line)
+        line = re.sub(r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}", "<IP>", line)
         # Replace long numbers (timestamps, IDs)
-        line = re.sub(r'\b\d{6,}\b', '<NUM>', line)
+        line = re.sub(r"\b\d{6,}\b", "<NUM>", line)
         # Replace hex sequences
-        line = re.sub(r'0x[0-9a-fA-F]+', '<HEX>', line)
+        line = re.sub(r"0x[0-9a-fA-F]+", "<HEX>", line)
         return line
 
     def _guess_level(self, text: str) -> str:

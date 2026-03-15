@@ -19,10 +19,12 @@ def _loki_response(streams):
     for labels, lines in streams:
         values = [[str(i), line] for i, line in enumerate(lines)]
         result.append({"stream": labels, "values": values})
-    return json.dumps({
-        "status": "success",
-        "data": {"resultType": "streams", "result": result},
-    }).encode()
+    return json.dumps(
+        {
+            "status": "success",
+            "data": {"resultType": "streams", "result": result},
+        }
+    ).encode()
 
 
 class TestDetectorInit(unittest.TestCase):
@@ -34,11 +36,13 @@ class TestDetectorInit(unittest.TestCase):
         self.assertEqual(plugin.custom_query, "")
 
     def test_custom_settings(self):
-        plugin = DetectorPlugin(_make_settings(
-            org_id="tenant-1",
-            extra_labels='{namespace="prod"}',
-            query='{app="myapp"} |= "error"',
-        ))
+        plugin = DetectorPlugin(
+            _make_settings(
+                org_id="tenant-1",
+                extra_labels='{namespace="prod"}',
+                query='{app="myapp"} |= "error"',
+            )
+        )
         self.assertEqual(plugin.loki_url, "http://loki:3100")
         self.assertEqual(plugin.org_id, "tenant-1")
         self.assertEqual(plugin.extra_labels, '{namespace="prod"}')
@@ -73,9 +77,11 @@ class TestDetectNoAnomalies(unittest.TestCase):
         """Lines exist but all counts are below the threshold."""
         lines = [f"error: something happened on host-{i}" for i in range(5)]
         resp = MagicMock()
-        resp.read.return_value = _loki_response([
-            ({"app": "web"}, lines),
-        ])
+        resp.read.return_value = _loki_response(
+            [
+                ({"app": "web"}, lines),
+            ]
+        )
         resp.status = 200
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
@@ -107,9 +113,11 @@ class TestDetectFindsAnomalies(unittest.TestCase):
         repeated = "ERROR: connection refused to database at 10.0.0.5:5432"
         lines = [repeated] * 20
         resp = MagicMock()
-        resp.read.return_value = _loki_response([
-            ({"app": "api", "namespace": "prod"}, lines),
-        ])
+        resp.read.return_value = _loki_response(
+            [
+                ({"app": "api", "namespace": "prod"}, lines),
+            ]
+        )
         resp.status = 200
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
@@ -135,9 +143,11 @@ class TestDetectFindsAnomalies(unittest.TestCase):
             + ["INFO: health check passed"] * 3  # below threshold
         )
         resp = MagicMock()
-        resp.read.return_value = _loki_response([
-            ({"host": "worker-1"}, lines),
-        ])
+        resp.read.return_value = _loki_response(
+            [
+                ({"host": "worker-1"}, lines),
+            ]
+        )
         resp.status = 200
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
@@ -161,9 +171,11 @@ class TestDetectFindsAnomalies(unittest.TestCase):
             for i in range(25)
         ]
         resp = MagicMock()
-        resp.read.return_value = _loki_response([
-            ({"service": "gateway"}, lines),
-        ])
+        resp.read.return_value = _loki_response(
+            [
+                ({"service": "gateway"}, lines),
+            ]
+        )
         resp.status = 200
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
@@ -182,10 +194,12 @@ class TestDetectFindsAnomalies(unittest.TestCase):
         """Same pattern across multiple Loki streams should be combined."""
         error_line = "error: service unavailable"
         resp = MagicMock()
-        resp.read.return_value = _loki_response([
-            ({"pod": "api-1"}, [error_line] * 8),
-            ({"pod": "api-2"}, [error_line] * 7),
-        ])
+        resp.read.return_value = _loki_response(
+            [
+                ({"pod": "api-1"}, [error_line] * 8),
+                ({"pod": "api-2"}, [error_line] * 7),
+            ]
+        )
         resp.status = 200
         resp.__enter__ = lambda s: s
         resp.__exit__ = MagicMock(return_value=False)
