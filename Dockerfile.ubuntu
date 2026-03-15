@@ -90,5 +90,6 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /tmp/logmedic /logmedic
+COPY plugins/ /plugins/
 
 ENTRYPOINT ["/logmedic"]
