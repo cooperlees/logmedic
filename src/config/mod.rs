@@ -1,14 +1,24 @@
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::error::Error;
 
+/// Raw config as deserialized from TOML (uses maps keyed by plugin name).
 #[derive(Debug, Deserialize, Clone)]
+struct RawConfig {
+    daemon: DaemonConfig,
+    #[serde(default)]
+    plugins: HashMap<String, RawPluginConfig>,
+    #[serde(default)]
+    remediators: HashMap<String, RawRemediatorConfig>,
+}
+
+/// Public config with name baked into each entry.
+#[derive(Debug, Clone)]
 pub struct Config {
     pub daemon: DaemonConfig,
-    #[serde(default)]
     pub plugins: Vec<PluginConfig>,
-    #[serde(default)]
     pub remediators: Vec<RemediatorConfig>,
 }
 
@@ -28,22 +38,39 @@ pub struct DaemonConfig {
     pub metrics_port: u16,
 }
 
+/// TOML shape: `[plugins.<name>]` with `kind`, `path`, and arbitrary settings.
 #[derive(Debug, Deserialize, Clone)]
+struct RawPluginConfig {
+    kind: PluginKind,
+    path: PathBuf,
+    /// All remaining keys become plugin-specific settings.
+    #[serde(flatten)]
+    settings: toml::Table,
+}
+
+/// TOML shape: `[remediators.<name>]` with `kind` and arbitrary settings.
+#[derive(Debug, Deserialize, Clone)]
+struct RawRemediatorConfig {
+    kind: RemediatorKind,
+    /// All remaining keys become remediator-specific settings.
+    #[serde(flatten)]
+    settings: toml::Table,
+}
+
+#[derive(Debug, Clone)]
 pub struct PluginConfig {
     pub name: String,
     pub kind: PluginKind,
     pub path: PathBuf,
     /// Plugin-specific settings passed as key-value pairs
-    #[serde(default)]
     pub settings: toml::Table,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct RemediatorConfig {
     pub name: String,
     pub kind: RemediatorKind,
     /// Remediator-specific settings
-    #[serde(default)]
     pub settings: toml::Table,
 }
 
@@ -84,9 +111,35 @@ pub fn load_config(path: &str) -> std::result::Result<Config, Error> {
         path: path.to_string(),
         source: Box::new(e),
     })?;
-    let config: Config = toml::from_str(&content).map_err(|e| Error::ConfigParse {
+    let raw: RawConfig = toml::from_str(&content).map_err(|e| Error::ConfigParse {
         path: path.to_string(),
         source: e,
     })?;
-    Ok(config)
+
+    let plugins = raw
+        .plugins
+        .into_iter()
+        .map(|(name, raw)| PluginConfig {
+            name,
+            kind: raw.kind,
+            path: raw.path,
+            settings: raw.settings,
+        })
+        .collect();
+
+    let remediators = raw
+        .remediators
+        .into_iter()
+        .map(|(name, raw)| RemediatorConfig {
+            name,
+            kind: raw.kind,
+            settings: raw.settings,
+        })
+        .collect();
+
+    Ok(Config {
+        daemon: raw.daemon,
+        plugins,
+        remediators,
+    })
 }

@@ -300,7 +300,9 @@ class TestExecute(unittest.TestCase):
         """SSH execution should call ssh with the right host and commands."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
-        plugin = RemediatorPlugin(_make_settings(ssh_key_path="/tmp/test_key"))
+        plugin = RemediatorPlugin(
+            _make_settings(enable_ssh=True, ssh_key_path="/tmp/test_key")
+        )
         action = {
             "description": "restart service",
             "kind": {
@@ -327,7 +329,7 @@ class TestExecute(unittest.TestCase):
             returncode=1, stdout="", stderr="Permission denied"
         )
 
-        plugin = RemediatorPlugin(_make_settings())
+        plugin = RemediatorPlugin(_make_settings(enable_ssh=True))
         action = {
             "description": "restart",
             "kind": {
@@ -339,6 +341,21 @@ class TestExecute(unittest.TestCase):
 
         self.assertIn("failed", result)
         self.assertIn("Permission denied", result["failed"]["reason"])
+
+    def test_execute_ssh_disabled_by_default(self):
+        """SSH actions should be rejected when enable_ssh is false (default)."""
+        plugin = RemediatorPlugin(_make_settings())
+        action = {
+            "description": "restart",
+            "kind": {
+                "ssh_command": {"host": "web-1", "commands": ["systemctl restart api"]}
+            },
+            "status": "proposed",
+        }
+        result = json.loads(plugin.execute(json.dumps(action)))
+
+        self.assertIn("failed", result)
+        self.assertIn("disabled", result["failed"]["reason"])
 
     def test_execute_no_repo(self):
         """PR with no repo specified → failure."""
@@ -384,7 +401,7 @@ class TestExecute(unittest.TestCase):
 
     def test_execute_ssh_missing_host(self):
         """SSH with no host → failure."""
-        plugin = RemediatorPlugin(_make_settings())
+        plugin = RemediatorPlugin(_make_settings(enable_ssh=True))
         action = {
             "description": "test",
             "kind": {"ssh_command": {"host": "", "commands": ["echo hi"]}},

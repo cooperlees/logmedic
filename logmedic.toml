@@ -8,12 +8,9 @@ metrics_port = 6969        # HTTP server: /metrics + /healthz
 
 # --- Detector plugins ---
 
-[[plugins]]
-name = "loki"
+[plugins.loki]
 kind = "python"
 path = "plugins/loki_detector/loki_detector.py"
-
-[plugins.settings]
 loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
@@ -21,15 +18,13 @@ loki_url = "http://localhost:3100"
 
 # --- Remediator plugins ---
 
-[[remediators]]
-name = "claude"
+[remediators.claude]
 kind = "ai"
-
-[remediators.settings]
 path = "plugins/claude_remediator/claude_remediator.py"
 # anthropic_api_key = ""  # or set ANTHROPIC_API_KEY env var
 model = "claude-sonnet-4-20250514"
 # default_repo = "myorg/infra-ansible"
 # auto_execute = false
+# enable_ssh = false
 # ssh_key_path = "~/.ssh/id_ed25519"
 # system_prompt = "Our infra uses Ansible for config management. Services run on k8s in AWS."

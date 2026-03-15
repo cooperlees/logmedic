@@ -10,6 +10,7 @@ Settings (passed via TOML config):
     github_token: str       - GitHub token for raising PRs
     default_repo: str       - Default repo for PRs (e.g. "org/ansible-infra")
     auto_execute: bool      - Whether to auto-execute proposed actions (default: false)
+    enable_ssh: bool        - Allow SSH command execution (default: false)
     ssh_key_path: str       - Path to SSH key for remote execution
     system_prompt: str      - Additional system context about your infrastructure
 """
@@ -35,13 +36,15 @@ class RemediatorPlugin:
         self.github_token = raw.get("github_token", os.environ.get("GITHUB_TOKEN", ""))
         self.default_repo = raw.get("default_repo", "")
         self.auto_execute = raw.get("auto_execute", False)
+        self.enable_ssh = raw.get("enable_ssh", False)
         self.ssh_key_path = raw.get("ssh_key_path", "")
         self.system_prompt = raw.get("system_prompt", "")
         log.debug(
-            "initialized: model=%s default_repo=%s auto_execute=%s api_key=%s",
+            "initialized: model=%s default_repo=%s auto_execute=%s enable_ssh=%s api_key=%s",
             self.model,
             self.default_repo or "(none)",
             self.auto_execute,
+            self.enable_ssh,
             "set" if self.api_key else "MISSING",
         )
 
@@ -81,7 +84,15 @@ class RemediatorPlugin:
         if "pull_request" in kind:
             result = self._execute_pr(kind["pull_request"])
         elif "ssh_command" in kind:
-            result = self._execute_ssh(kind["ssh_command"])
+            if not self.enable_ssh:
+                log.warning("SSH action rejected: enable_ssh is false")
+                result = {
+                    "failed": {
+                        "reason": "SSH execution is disabled (set enable_ssh = true to allow)"
+                    }
+                }
+            else:
+                result = self._execute_ssh(kind["ssh_command"])
         elif "report" in kind:
             result = {"report": {"message": kind["report"]["message"]}}
         else:
