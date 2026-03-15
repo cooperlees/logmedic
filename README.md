@@ -19,6 +19,82 @@ Production systems generate enormous volumes of logs. When something goes wrong,
 2. **Diagnose** — AI analyzes the detected patterns, identifies root causes, and proposes concrete fixes
 3. **Remediate** — Fixes are applied automatically: raising PRs against infrastructure repos (Ansible, Terraform, k8s manifests) or SSHing into hosts to apply changes directly
 
+## Quick Start
+
+### 1. Get your API tokens
+
+**Anthropic API key** (for Claude-powered remediation):
+
+1. Sign up or log in at [console.anthropic.com](https://console.anthropic.com/)
+2. Go to **Settings > API Keys**
+3. Click **Create Key**, give it a name, and copy the key (starts with `sk-ant-`)
+
+**GitHub personal access token** (for creating pull requests):
+
+1. Go to [github.com/settings/tokens](https://github.com/settings/tokens)
+2. Click **Generate new token (classic)**
+3. Select scopes: `repo` (full control of private repositories)
+4. Click **Generate token** and copy it
+
+### 2. Create a minimal config
+
+Create a `logmedic.toml` file:
+
+```toml
+[daemon]
+poll_interval_secs = 300
+frequency_threshold = 50
+lookback = "1h"
+
+[[plugins]]
+name = "loki"
+kind = "python"
+path = "plugins/loki_detector/loki_detector.py"
+
+[plugins.settings]
+loki_url = "http://loki:3100"    # adjust to your Loki endpoint
+
+[[remediators]]
+name = "claude"
+kind = "ai"
+
+[remediators.settings]
+path = "plugins/claude_remediator/claude_remediator.py"
+model = "claude-sonnet-4-20250514"
+default_repo = "myorg/infra"     # repo to open PRs against
+```
+
+### 3. Run with Docker
+
+```bash
+docker run --rm \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e GITHUB_TOKEN="ghp_..." \
+  -v $(pwd)/logmedic.toml:/config.toml \
+  cooperlees/logmedic:latest /config.toml
+```
+
+The health endpoint is available at `http://localhost:6969/healthz` — add `-p 6969:6969` if you want to expose it:
+
+```bash
+docker run --rm \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e GITHUB_TOKEN="ghp_..." \
+  -p 6969:6969 \
+  -v $(pwd)/logmedic.toml:/config.toml \
+  cooperlees/logmedic:latest /config.toml
+```
+
+For debugging, use the Debian-based image which includes a shell:
+
+```bash
+docker run --rm -it \
+  -e ANTHROPIC_API_KEY="sk-ant-..." \
+  -e GITHUB_TOKEN="ghp_..." \
+  -v $(pwd)/logmedic.toml:/config.toml \
+  cooperlees/logmedic:latest-ubuntu bash
+```
+
 ## Architecture
 
 ```
@@ -127,15 +203,15 @@ Pre-built multi-arch images (`linux/amd64` + `linux/arm64`) are pushed to Docker
 |-----|-----------|-------------|
 | `cooperlees/logmedic:latest` | `gcr.io/distroless/cc-debian12` | Minimal distroless image (no shell). Recommended for production. |
 | `cooperlees/logmedic:v1.2.3` | `gcr.io/distroless/cc-debian12` | Pinned release — distroless. |
-| `cooperlees/logmedic:latest-debian` | `debian:12-slim` | Debian slim image with bash/shell for debugging. |
-| `cooperlees/logmedic:v1.2.3-debian` | `debian:12-slim` | Pinned release — Debian slim. |
+| `cooperlees/logmedic:latest-ubuntu` | `ubuntu:24.04` | Ubuntu image with bash/shell for debugging. |
+| `cooperlees/logmedic:v1.2.3-ubuntu` | `ubuntu:24.04` | Pinned release — Ubuntu. |
 
 ```bash
 # Minimal distroless (recommended)
 docker run --rm -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest /config.toml
 
 # Debian slim (has shell for debugging)
-docker run --rm -it -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest-debian bash
+docker run --rm -it -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest-ubuntu bash
 ```
 
 ## Running
