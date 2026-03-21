@@ -5,10 +5,12 @@ Queries Grafana Loki for high-frequency error/warning log lines.
 Requires `requests` to be installed in the Python environment.
 
 Settings (passed via TOML config):
-    loki_url: str       - Loki base URL (e.g. "http://loki:3100")
-    org_id: str         - Optional Loki tenant/org ID header
-    query: str          - LogQL query override (default: error/warn filter)
-    extra_labels: str   - Additional label matchers (e.g. '{namespace="prod"}')
+    loki_url: str        - Loki base URL (e.g. "http://loki:3100")
+    org_id: str          - Optional Loki tenant/org ID header
+    query: str           - LogQL query override (default: error/warn filter)
+    extra_labels: str    - Additional label matchers (e.g. '{namespace="prod"}')
+    deny_labels: list    - Skip anomalies whose stream labels match any "key=value" entry
+                           (e.g. ["app=homeassistant", "namespace=legacy"])
 """
 
 import json
@@ -27,12 +29,22 @@ class DetectorPlugin:
         self.org_id = raw.get("org_id", "")
         self.extra_labels = raw.get("extra_labels", "")
         self.custom_query = raw.get("query", "")
+        self.deny_labels: set[tuple[str, str]] = set()
+        for entry in raw.get("deny_labels", []):
+            if "=" in entry:
+                k, v = entry.split("=", 1)
+                self.deny_labels.add((k, v))
+            else:
+                log.warning(
+                    "deny_labels entry %r has no '=' separator, skipping", entry
+                )
         log.debug(
-            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s",
+            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s deny_labels=%s",
             self.loki_url,
             self.org_id or "(none)",
             self.extra_labels or "(none)",
             self.custom_query or "(default)",
+            self.deny_labels or "(none)",
         )
 
     def name(self) -> str:
@@ -95,8 +107,18 @@ class DetectorPlugin:
         results = data.get("data", {}).get("result", [])
 
         total_lines = 0
+        skipped_streams = 0
         for stream in results:
             stream_labels = stream.get("stream", {})
+
+            # Skip streams whose labels match any deny_labels entry
+            if self.deny_labels and not self.deny_labels.isdisjoint(
+                stream_labels.items()
+            ):
+                log.info("deny_labels suppressed stream: labels=%s", stream_labels)
+                skipped_streams += 1
+                continue
+
             values = stream.get("values", [])
             for _ts, line in values:
                 total_lines += 1
@@ -110,9 +132,10 @@ class DetectorPlugin:
                     samples_map[pattern].append(line)
 
         log.debug(
-            "processed %d log lines across %d streams, %d unique patterns",
+            "processed %d log lines across %d streams (%d skipped by deny_labels), %d unique patterns",
             total_lines,
             len(results),
+            skipped_streams,
             len(line_counter),
         )
 

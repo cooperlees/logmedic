@@ -5,7 +5,6 @@ poll_interval_secs = 300   # 5 minutes
 frequency_threshold = 50   # min occurrences to flag
 lookback = "1h"
 metrics_port = 6969        # HTTP server: /metrics + /healthz
-# deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies matching these labels
 
 # --- Detector plugins ---
 
@@ -16,6 +15,7 @@ loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
 # query = '{app="myservice"} |= "error"'
+# deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies from these Loki stream labels
 
 # --- Remediator plugins ---
 

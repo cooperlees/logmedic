@@ -158,7 +158,6 @@ poll_interval_secs = 300   # how often to run detection (5 min)
 frequency_threshold = 50   # min occurrences to flag a pattern
 lookback = "1h"            # time window for log queries
 metrics_port = 6969        # Prometheus /metrics endpoint
-# deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies matching these labels
 
 [[plugins]]
 name = "loki"
@@ -169,6 +168,7 @@ path = "plugins/loki_detector/loki_detector.py"
 loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
+# deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies from these Loki stream labels
 
 [[remediators]]
 name = "claude"

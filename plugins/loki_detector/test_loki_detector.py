@@ -250,5 +250,86 @@ class TestNormalize(unittest.TestCase):
         self.assertIn("<HEX>", self.plugin._normalize(line))
 
 
+class TestDenyLabels(unittest.TestCase):
+    """deny_labels setting suppresses matching anomalies."""
+
+    def test_deny_labels_init_empty_by_default(self):
+        plugin = DetectorPlugin(_make_settings())
+        self.assertEqual(plugin.deny_labels, set())
+
+    def test_deny_labels_parsed(self):
+        plugin = DetectorPlugin(
+            _make_settings(deny_labels=["app=homeassistant", "namespace=legacy"])
+        )
+        self.assertIn(("app", "homeassistant"), plugin.deny_labels)
+        self.assertIn(("namespace", "legacy"), plugin.deny_labels)
+
+    def test_deny_labels_malformed_entry_skipped(self):
+        plugin = DetectorPlugin(_make_settings(deny_labels=["noequalssign"]))
+        self.assertEqual(plugin.deny_labels, set())
+
+    @patch("loki_detector.urlopen")
+    def test_matching_anomaly_is_suppressed(self, mock_urlopen):
+        resp = MagicMock()
+        resp.read.return_value = _loki_response(
+            [
+                ({"app": "homeassistant"}, ["ERROR: mqtt connection lost"] * 20),
+                ({"app": "prometheus"}, ["ERROR: scrape target unreachable"] * 15),
+            ]
+        )
+        resp.status = 200
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = DetectorPlugin(_make_settings(deny_labels=["app=homeassistant"]))
+        anomalies = plugin.detect("1h", 5)
+
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(anomalies[0]["labels"]["app"], "prometheus")
+
+    @patch("loki_detector.urlopen")
+    def test_multiple_deny_entries(self, mock_urlopen):
+        resp = MagicMock()
+        resp.read.return_value = _loki_response(
+            [
+                ({"app": "homeassistant"}, ["ERROR: mqtt connection lost"] * 20),
+                ({"namespace": "legacy"}, ["ERROR: deprecated api call"] * 15),
+                ({"app": "grafana"}, ["ERROR: datasource timeout"] * 10),
+            ]
+        )
+        resp.status = 200
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = DetectorPlugin(
+            _make_settings(deny_labels=["app=homeassistant", "namespace=legacy"])
+        )
+        anomalies = plugin.detect("1h", 5)
+
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(anomalies[0]["labels"]["app"], "grafana")
+
+    @patch("loki_detector.urlopen")
+    def test_no_deny_list_passes_all(self, mock_urlopen):
+        resp = MagicMock()
+        resp.read.return_value = _loki_response(
+            [
+                ({"app": "homeassistant"}, ["ERROR: mqtt connection lost"] * 20),
+                ({"app": "grafana"}, ["ERROR: datasource timeout"] * 10),
+            ]
+        )
+        resp.status = 200
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = DetectorPlugin(_make_settings())
+        anomalies = plugin.detect("1h", 5)
+
+        self.assertEqual(len(anomalies), 2)
+
+
 if __name__ == "__main__":
     unittest.main()
