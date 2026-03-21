@@ -36,6 +36,10 @@ pub struct DaemonConfig {
     /// Port for Prometheus metrics HTTP endpoint
     #[serde(default = "default_metrics_port")]
     pub metrics_port: u16,
+    /// Deny list: anomalies whose labels contain any matching "key=value" entry are skipped.
+    /// Example: ["app=homeassistant", "namespace=legacy"] ignores all anomalies from those sources.
+    #[serde(default)]
+    pub deny_labels: Vec<String>,
 }
 
 /// TOML shape: `[plugins.<name>]` with `kind`, `path`, and arbitrary settings.

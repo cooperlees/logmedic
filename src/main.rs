@@ -10,6 +10,33 @@ use tracing::{debug, error, info, warn};
 
 use crate::remediate::ActionKind;
 
+/// Filter out anomalies whose labels match any entry in the deny list.
+///
+/// Each deny entry must be a `"key=value"` string. An anomaly is excluded when
+/// at least one of its label key-value pairs matches at least one deny entry.
+/// Malformed entries (missing `=`) are silently skipped.
+fn filter_denied_anomalies(
+    anomalies: Vec<detect::LogAnomaly>,
+    deny_labels: &[String],
+) -> Vec<detect::LogAnomaly> {
+    if deny_labels.is_empty() {
+        return anomalies;
+    }
+    anomalies
+        .into_iter()
+        .filter(|anomaly| {
+            !deny_labels.iter().any(|deny| {
+                if let Some((k, v)) = deny.split_once('=') {
+                    anomaly.labels.get(k).is_some_and(|lv| lv == v)
+                } else {
+                    warn!(entry = %deny, "deny_labels entry has no '=' separator, skipping");
+                    false
+                }
+            })
+        })
+        .collect()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -142,6 +169,18 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        // Filter out anomalies matching the deny list
+        let before = all_anomalies.len();
+        let all_anomalies = filter_denied_anomalies(all_anomalies, &cfg.daemon.deny_labels);
+        let denied = before - all_anomalies.len();
+        if denied > 0 {
+            info!(
+                denied = denied,
+                remaining = all_anomalies.len(),
+                "anomalies suppressed by deny_labels"
+            );
+        }
+
         if all_anomalies.is_empty() {
             info!("no anomalies detected this cycle");
         } else {
@@ -246,5 +285,82 @@ async fn main() -> anyhow::Result<()> {
             "sleeping until next cycle"
         );
         tokio::time::sleep(Duration::from_secs(cfg.daemon.poll_interval_secs)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_anomaly(labels: &[(&str, &str)]) -> detect::LogAnomaly {
+        detect::LogAnomaly {
+            pattern: "test pattern".to_string(),
+            count: 1,
+            level: detect::LogLevel::Error,
+            labels: labels
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            samples: vec![],
+        }
+    }
+
+    #[test]
+    fn test_empty_deny_list_passes_all() {
+        let anomalies = vec![make_anomaly(&[("app", "homeassistant")])];
+        let result = filter_denied_anomalies(anomalies, &[]);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_matching_label_is_filtered() {
+        let anomalies = vec![
+            make_anomaly(&[("app", "homeassistant")]),
+            make_anomaly(&[("app", "prometheus")]),
+        ];
+        let result =
+            filter_denied_anomalies(anomalies, &["app=homeassistant".to_string()]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].labels["app"], "prometheus");
+    }
+
+    #[test]
+    fn test_multiple_deny_entries_filter_each_match() {
+        let anomalies = vec![
+            make_anomaly(&[("app", "homeassistant")]),
+            make_anomaly(&[("namespace", "legacy")]),
+            make_anomaly(&[("app", "prometheus")]),
+        ];
+        let result = filter_denied_anomalies(
+            anomalies,
+            &[
+                "app=homeassistant".to_string(),
+                "namespace=legacy".to_string(),
+            ],
+        );
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].labels["app"], "prometheus");
+    }
+
+    #[test]
+    fn test_anomaly_with_no_matching_label_passes() {
+        let anomalies = vec![make_anomaly(&[("app", "grafana"), ("env", "prod")])];
+        let result =
+            filter_denied_anomalies(anomalies, &["app=homeassistant".to_string()]);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_malformed_entry_without_equals_is_skipped() {
+        let anomalies = vec![make_anomaly(&[("app", "homeassistant")])];
+        let result =
+            filter_denied_anomalies(anomalies, &["noequalssign".to_string()]);
+        assert_eq!(result.len(), 1);
+    }
+
+    #[test]
+    fn test_empty_anomalies_list() {
+        let result = filter_denied_anomalies(vec![], &["app=homeassistant".to_string()]);
+        assert!(result.is_empty());
     }
 }
