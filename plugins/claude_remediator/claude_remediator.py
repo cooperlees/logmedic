@@ -167,9 +167,7 @@ class RemediatorPlugin:
                 data = json.loads(resp.read())
         except HTTPError as e:
             resp_body = e.read().decode(errors="replace")
-            log.error(
-                "Claude API error: %d %s — %s", e.code, e.reason, resp_body
-            )
+            log.error("Claude API error: %d %s — %s", e.code, e.reason, resp_body)
             raise RuntimeError(
                 f"Claude API request failed ({e.code}): {resp_body}"
             ) from e

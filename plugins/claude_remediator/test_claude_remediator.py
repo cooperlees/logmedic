@@ -232,7 +232,6 @@ class TestPropose(unittest.TestCase):
 
         self.assertEqual(len(result), 2)
 
-
     @patch("claude_remediator.urlopen")
     def test_propose_http_error_includes_body(self, mock_urlopen):
         """HTTP errors from the Claude API should include the response body."""
