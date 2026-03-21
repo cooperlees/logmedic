@@ -7,6 +7,7 @@ Can raise PRs via the GitHub REST API or SSH into hosts to apply fixes.
 Settings (passed via TOML config):
     anthropic_api_key: str  - Anthropic API key
     model: str              - Model to use (default: claude-sonnet-4-6)
+    max_tokens: int         - Max tokens for Claude response (default: 16384)
     github_token: str       - GitHub token for raising PRs
     default_repo: str       - Default repo for PRs (e.g. "org/ansible-infra")
     auto_execute: bool      - Whether to auto-execute proposed actions (default: false)
@@ -26,6 +27,8 @@ import github
 
 log = logging.getLogger("logmedic.claude_remediator")
 
+DEFAULT_MAX_TOKENS = 16384
+
 
 class RemediatorPlugin:
     def __init__(self, settings: dict):
@@ -39,13 +42,15 @@ class RemediatorPlugin:
         self.auto_execute = raw.get("auto_execute", False)
         self.enable_ssh = raw.get("enable_ssh", False)
         self.ssh_key_path = raw.get("ssh_key_path", "")
+        self.max_tokens = raw.get("max_tokens", DEFAULT_MAX_TOKENS)
         self.system_prompt = raw.get("system_prompt", "")
         log.debug(
-            "initialized: model=%s default_repo=%s auto_execute=%s enable_ssh=%s api_key=%s",
+            "initialized: model=%s default_repo=%s auto_execute=%s enable_ssh=%s max_tokens=%d api_key=%s",
             self.model,
             self.default_repo or "(none)",
             self.auto_execute,
             self.enable_ssh,
+            self.max_tokens,
             "set" if self.api_key else "MISSING",
         )
 
@@ -95,7 +100,8 @@ class RemediatorPlugin:
             else:
                 result = self._execute_ssh(kind["ssh_command"])
         elif "report" in kind:
-            result = {"report": {"message": kind["report"]["message"]}}
+            log.info("report: %s", kind["report"]["message"])
+            result = {"applied": None}
         else:
             result = {"failed": {"reason": "unknown action kind"}}
 
@@ -151,7 +157,7 @@ class RemediatorPlugin:
         payload = json.dumps(
             {
                 "model": self.model,
-                "max_tokens": 4096,
+                "max_tokens": self.max_tokens,
                 "system": system,
                 "messages": [{"role": "user", "content": user_msg}],
             }
@@ -178,12 +184,19 @@ class RemediatorPlugin:
                 f"Claude API request failed ({e.code}): {resp_body}"
             ) from e
 
+        stop_reason = data.get("stop_reason", "?")
         log.debug(
             "Claude API response: model=%s usage=%s stop_reason=%s",
             data.get("model", "?"),
             data.get("usage", {}),
-            data.get("stop_reason", "?"),
+            stop_reason,
         )
+        if stop_reason == "max_tokens":
+            log.warning(
+                "Claude response truncated at max_tokens=%d — consider increasing "
+                "max_tokens in plugin settings",
+                self.max_tokens,
+            )
 
         # Extract text from response
         text = ""

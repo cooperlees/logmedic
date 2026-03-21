@@ -4,7 +4,7 @@ import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from claude_remediator import RemediatorPlugin
+from claude_remediator import DEFAULT_MAX_TOKENS, RemediatorPlugin
 
 
 def _make_settings(**overrides):
@@ -36,7 +36,7 @@ SAMPLE_ANOMALIES = [
 ]
 
 
-def _claude_api_response(actions_json):
+def _claude_api_response(actions_json, stop_reason="end_turn"):
     """Build a mock Anthropic Messages API response."""
     return json.dumps(
         {
@@ -45,7 +45,7 @@ def _claude_api_response(actions_json):
             "role": "assistant",
             "model": "claude-sonnet-4-6",
             "content": [{"type": "text", "text": actions_json}],
-            "stop_reason": "end_turn",
+            "stop_reason": stop_reason,
             "usage": {"input_tokens": 500, "output_tokens": 200},
         }
     ).encode()
@@ -90,6 +90,7 @@ class TestRemediatorInit(unittest.TestCase):
         self.assertEqual(plugin.api_key, "")
         self.assertEqual(plugin.default_repo, "")
         self.assertFalse(plugin.auto_execute)
+        self.assertEqual(plugin.max_tokens, DEFAULT_MAX_TOKENS)
 
     def test_custom_settings(self):
         plugin = RemediatorPlugin(_make_settings(auto_execute=True))
@@ -97,6 +98,11 @@ class TestRemediatorInit(unittest.TestCase):
         self.assertEqual(plugin.default_repo, "cooperlees/clc_ansible")
         assertTrue = self.assertTrue
         assertTrue(plugin.auto_execute)
+
+    def test_custom_max_tokens(self):
+        """max_tokens can be overridden via settings."""
+        plugin = RemediatorPlugin(_make_settings(max_tokens=8192))
+        self.assertEqual(plugin.max_tokens, 8192)
 
     def test_name(self):
         plugin = RemediatorPlugin(_make_settings())
@@ -175,13 +181,54 @@ class TestPropose(unittest.TestCase):
         # Check payload
         payload = json.loads(req.data)
         self.assertEqual(payload["model"], "claude-sonnet-4-6")
-        self.assertEqual(payload["max_tokens"], 4096)
+        self.assertEqual(payload["max_tokens"], 16384)
         self.assertIn("messages", payload)
         self.assertIn("system", payload)
         # User message should contain anomaly data
         user_content = payload["messages"][0]["content"]
         self.assertIn("connection refused", user_content)
         self.assertIn("150", user_content)
+
+    @patch("claude_remediator.urlopen")
+    def test_propose_uses_custom_max_tokens(self, mock_urlopen):
+        """Custom max_tokens setting is sent to the Claude API."""
+        resp = MagicMock()
+        resp.read.return_value = _claude_api_response("[]")
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = RemediatorPlugin(_make_settings(max_tokens=8192))
+        plugin.propose(_anomalies_json(SAMPLE_ANOMALIES))
+
+        req = mock_urlopen.call_args[0][0]
+        payload = json.loads(req.data)
+        self.assertEqual(payload["max_tokens"], 8192)
+
+    @patch("claude_remediator.urlopen")
+    def test_propose_warns_on_max_tokens_truncation(self, mock_urlopen):
+        """A warning is logged when Claude's response is truncated."""
+        # Return truncated JSON that will fail to parse
+        resp = MagicMock()
+        resp.read.return_value = _claude_api_response(
+            '[{"description": "trunca', stop_reason="max_tokens"
+        )
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = RemediatorPlugin(_make_settings())
+        with self.assertLogs("logmedic.claude_remediator", level="WARNING") as cm:
+            result = json.loads(plugin.propose(_anomalies_json(SAMPLE_ANOMALIES)))
+
+        # Should have logged a truncation warning
+        self.assertTrue(
+            any("truncated" in msg for msg in cm.output),
+            f"Expected truncation warning, got: {cm.output}",
+        )
+        # Should still return a fallback report action
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["description"], "Claude response parsing failed")
 
     @patch("claude_remediator.urlopen")
     def test_propose_handles_markdown_fenced_response(self, mock_urlopen):
@@ -315,8 +362,7 @@ class TestExecute(unittest.TestCase):
         }
         result = json.loads(plugin.execute(json.dumps(action)))
 
-        self.assertIn("report", result)
-        self.assertIn("message", result["report"])
+        self.assertIn("applied", result)
 
     @patch("claude_remediator.subprocess.run")
     def test_execute_ssh(self, mock_run):
