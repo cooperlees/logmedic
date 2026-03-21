@@ -6,7 +6,7 @@ Can raise PRs via the GitHub REST API or SSH into hosts to apply fixes.
 
 Settings (passed via TOML config):
     anthropic_api_key: str  - Anthropic API key
-    model: str              - Model to use (default: claude-sonnet-4-20250514)
+    model: str              - Model to use (default: claude-sonnet-4-6)
     github_token: str       - GitHub token for raising PRs
     default_repo: str       - Default repo for PRs (e.g. "org/ansible-infra")
     auto_execute: bool      - Whether to auto-execute proposed actions (default: false)
@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import subprocess
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import github
@@ -32,7 +33,7 @@ class RemediatorPlugin:
         self.api_key = raw.get(
             "anthropic_api_key", os.environ.get("ANTHROPIC_API_KEY", "")
         )
-        self.model = raw.get("model", "claude-sonnet-4-20250514")
+        self.model = raw.get("model", "claude-sonnet-4-6")
         self.github_token = raw.get("github_token", os.environ.get("GITHUB_TOKEN", ""))
         self.default_repo = raw.get("default_repo", "")
         self.auto_execute = raw.get("auto_execute", False)
@@ -161,8 +162,17 @@ class RemediatorPlugin:
             method="POST",
         )
 
-        with urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read())
+        try:
+            with urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read())
+        except HTTPError as e:
+            resp_body = e.read().decode(errors="replace")
+            log.error(
+                "Claude API error: %d %s — %s", e.code, e.reason, resp_body
+            )
+            raise RuntimeError(
+                f"Claude API request failed ({e.code}): {resp_body}"
+            ) from e
 
         log.debug(
             "Claude API response: model=%s usage=%s stop_reason=%s",

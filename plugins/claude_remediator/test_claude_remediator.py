@@ -10,7 +10,7 @@ from claude_remediator import RemediatorPlugin
 def _make_settings(**overrides):
     raw = {
         "anthropic_api_key": "sk-ant-test-key",
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "default_repo": "cooperlees/clc_ansible",
     }
     raw.update(overrides)
@@ -43,7 +43,7 @@ def _claude_api_response(actions_json):
             "id": "msg_test_123",
             "type": "message",
             "role": "assistant",
-            "model": "claude-sonnet-4-20250514",
+            "model": "claude-sonnet-4-6",
             "content": [{"type": "text", "text": actions_json}],
             "stop_reason": "end_turn",
             "usage": {"input_tokens": 500, "output_tokens": 200},
@@ -86,7 +86,7 @@ REPORT_ACTION = {
 class TestRemediatorInit(unittest.TestCase):
     def test_defaults(self):
         plugin = RemediatorPlugin({"settings_json": "{}"})
-        self.assertEqual(plugin.model, "claude-sonnet-4-20250514")
+        self.assertEqual(plugin.model, "claude-sonnet-4-6")
         self.assertEqual(plugin.api_key, "")
         self.assertEqual(plugin.default_repo, "")
         self.assertFalse(plugin.auto_execute)
@@ -174,7 +174,7 @@ class TestPropose(unittest.TestCase):
 
         # Check payload
         payload = json.loads(req.data)
-        self.assertEqual(payload["model"], "claude-sonnet-4-20250514")
+        self.assertEqual(payload["model"], "claude-sonnet-4-6")
         self.assertEqual(payload["max_tokens"], 4096)
         self.assertIn("messages", payload)
         self.assertIn("system", payload)
@@ -231,6 +231,30 @@ class TestPropose(unittest.TestCase):
         result = json.loads(plugin.propose(_anomalies_json(SAMPLE_ANOMALIES)))
 
         self.assertEqual(len(result), 2)
+
+
+    @patch("claude_remediator.urlopen")
+    def test_propose_http_error_includes_body(self, mock_urlopen):
+        """HTTP errors from the Claude API should include the response body."""
+        from urllib.error import HTTPError
+        from io import BytesIO
+
+        error_body = b'{"type":"error","error":{"type":"invalid_request_error","message":"model: claude-sonnet-4-20250514 is not available"}}'
+        err = HTTPError(
+            "https://api.anthropic.com/v1/messages",
+            400,
+            "Bad Request",
+            {},  # type: ignore[arg-type]
+            BytesIO(error_body),
+        )
+        mock_urlopen.side_effect = err
+
+        plugin = RemediatorPlugin(_make_settings())
+        with self.assertRaises(RuntimeError) as ctx:
+            plugin.propose(_anomalies_json(SAMPLE_ANOMALIES))
+
+        self.assertIn("400", str(ctx.exception))
+        self.assertIn("invalid_request_error", str(ctx.exception))
 
 
 class TestExecute(unittest.TestCase):

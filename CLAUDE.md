@@ -17,7 +17,7 @@ cargo fmt --all                    # Auto-format
 
 **Feature flags:** The `python` feature (default-enabled) controls PyO3 Python plugin embedding. Without it, only native `.so`/`.dylib` plugins work; configuring a Python plugin returns `PluginError::PythonNotEnabled`. Python-related error variants and `src/plugin/python.rs` are gated with `#[cfg(feature = "python")]`.
 
-When building with Python: Python 3.13 must be installed with development headers (`python3-dev`). PyO3 0.22 does **not** support Python 3.14 yet ([PyO3#4584](https://github.com/PyO3/pyo3/issues/4584)). Set `PYO3_PYTHON=python3.13` if the system default differs. On Linux, the linker may need `LIBRARY_PATH` pointing to Python's lib directory.
+When building with Python: Python 3.13 must be installed with development headers (`python3-dev`). PyO3 0.22 does **not** support Python 3.14 yet ([PyO3#4584](https://github.com/PyO3/pyo3/issues/4584)). Set `PYO3_PYTHON=python3.13` if the system default differs. On macOS with Homebrew: `export PYO3_PYTHON=/opt/homebrew/bin/python3.13`. On Linux, the linker may need `LIBRARY_PATH` pointing to Python's lib directory.
 
 ## Architecture
 
