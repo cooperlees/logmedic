@@ -120,6 +120,12 @@ class RemediatorPlugin:
             '"status": "proposed"}\n\n'
             "Output ONLY the JSON array, no markdown fences or explanation."
         )
+        if self.default_repo:
+            base += (
+                f"\n\nIMPORTANT: When proposing pull_request actions, always use "
+                f'repo "{self.default_repo}" unless a different repo is clearly '
+                f"indicated by the anomaly context."
+            )
         if self.system_prompt:
             base += f"\n\nAdditional infrastructure context:\n{self.system_prompt}"
         return base
@@ -218,6 +224,13 @@ class RemediatorPlugin:
         No local git or gh CLI required.
         """
         repo = pr.get("repo", self.default_repo)
+        if self.default_repo and repo != self.default_repo:
+            log.warning(
+                "PR repo %r differs from configured default_repo %r, using default",
+                repo,
+                self.default_repo,
+            )
+            repo = self.default_repo
         branch = pr.get("branch", "logmedic/auto-fix")
         title = pr.get("title", "logmedic: automated fix")
         body = pr.get("body", "")

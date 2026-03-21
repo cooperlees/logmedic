@@ -447,6 +447,11 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("pull_request", prompt)
         self.assertIn("ssh_command", prompt)
 
+    def test_system_prompt_includes_default_repo(self):
+        plugin = RemediatorPlugin(_make_settings())
+        prompt = plugin._build_system_prompt()
+        self.assertIn("cooperlees/clc_ansible", prompt)
+
     def test_system_prompt_includes_custom_context(self):
         plugin = RemediatorPlugin(
             _make_settings(system_prompt="We use Ansible for all config management.")
@@ -461,6 +466,43 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("150", prompt)
         self.assertIn("api-server", prompt)
         self.assertIn("Anomaly 1", prompt)
+
+    @patch("claude_remediator.github.create_pull_request")
+    def test_execute_pr_overrides_wrong_repo(self, mock_create_pr):
+        """When default_repo is set, ignore Claude's hallucinated repo name."""
+        mock_create_pr.return_value = {
+            "html_url": "https://github.com/cooperlees/clc_ansible/pull/99",
+            "number": 99,
+        }
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test123"))
+        # Claude returned "cooperlees/ansible" instead of "cooperlees/clc_ansible"
+        wrong_repo_pr = {
+            "repo": "cooperlees/ansible",
+            "branch": "fix/mariadb-upgrade",
+            "title": "fix: add mariadb-upgrade task",
+            "body": "Adds upgrade task.",
+            "files_changed": [
+                {"path": "roles/mariadb/tasks/main.yml", "content": "upgraded"}
+            ],
+        }
+        action = {
+            "description": "test",
+            "kind": {"pull_request": wrong_repo_pr},
+            "status": "proposed",
+        }
+        result = json.loads(plugin.execute(json.dumps(action)))
+
+        self.assertIn("applied", result)
+        # Should have called with the configured default_repo, not the hallucinated one
+        mock_create_pr.assert_called_once_with(
+            token="ghp_test123",
+            repo="cooperlees/clc_ansible",
+            branch="fix/mariadb-upgrade",
+            title="fix: add mariadb-upgrade task",
+            body="Adds upgrade task.",
+            files=wrong_repo_pr["files_changed"],
+        )
 
 
 if __name__ == "__main__":
