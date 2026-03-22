@@ -168,6 +168,7 @@ path = "plugins/loki_detector/loki_detector.py"
 loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
+# deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies from these Loki stream labels
 
 [[remediators]]
 name = "claude"
