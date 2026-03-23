@@ -564,21 +564,50 @@ class TestFetchRepoContext(unittest.TestCase):
 
     @patch("claude_remediator.github.get_file_content")
     @patch("claude_remediator.github.get_repo_tree")
-    def test_fetches_repo_tree_and_files(self, mock_tree, mock_content):
+    @patch("claude_remediator.github.get_default_branch", return_value="main")
+    def test_fetches_repo_tree_and_files(self, _mock_branch, mock_tree, mock_content):
+        # Contents API returns "name", "type"="dir"/"file", "path", "size"
         mock_tree.side_effect = [
             # top-level
             [
-                {"path": "roles", "type": "tree"},
-                {"path": "README.md", "type": "blob"},
+                {"name": "roles", "path": "roles", "type": "dir", "size": 0},
+                {"name": "README.md", "path": "README.md", "type": "file", "size": 50},
             ],
             # roles/
-            [{"path": "nginx", "type": "tree"}],
+            [{"name": "nginx", "path": "roles/nginx", "type": "dir", "size": 0}],
             # roles/nginx/
-            [{"path": "defaults", "type": "tree"}, {"path": "tasks", "type": "tree"}],
+            [
+                {
+                    "name": "defaults",
+                    "path": "roles/nginx/defaults",
+                    "type": "dir",
+                    "size": 0,
+                },
+                {
+                    "name": "tasks",
+                    "path": "roles/nginx/tasks",
+                    "type": "dir",
+                    "size": 0,
+                },
+            ],
             # roles/nginx/defaults/
-            [{"path": "main.yml", "type": "blob"}],
+            [
+                {
+                    "name": "main.yml",
+                    "path": "roles/nginx/defaults/main.yml",
+                    "type": "file",
+                    "size": 30,
+                }
+            ],
             # roles/nginx/tasks/
-            [{"path": "main.yml", "type": "blob"}],
+            [
+                {
+                    "name": "main.yml",
+                    "path": "roles/nginx/tasks/main.yml",
+                    "type": "file",
+                    "size": 25,
+                }
+            ],
         ]
         mock_content.side_effect = [
             "worker_connections: 1024\n",
@@ -593,6 +622,11 @@ class TestFetchRepoContext(unittest.TestCase):
         self.assertIn("worker_connections", result)
         self.assertIn("install nginx", result)
         self.assertEqual(mock_content.call_count, 2)
+        # Verify ref is passed to get_repo_tree
+        for call in mock_tree.call_args_list:
+            self.assertEqual(
+                call[1].get("ref", call[0][3] if len(call[0]) > 3 else ""), "main"
+            )
 
     def test_returns_empty_without_repo(self):
         plugin = RemediatorPlugin(_make_settings(default_repo=""))
@@ -602,12 +636,102 @@ class TestFetchRepoContext(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings(github_token=""))
         self.assertEqual(plugin._fetch_repo_context(), "")
 
-    @patch("claude_remediator.github.get_repo_tree")
-    def test_handles_api_error_gracefully(self, mock_tree):
-        mock_tree.side_effect = RuntimeError("403 forbidden")
+    @patch("claude_remediator.github.get_default_branch")
+    def test_handles_api_error_gracefully(self, mock_branch):
+        mock_branch.side_effect = RuntimeError("403 forbidden")
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._fetch_repo_context()
         self.assertEqual(result, "")
+
+    @patch("claude_remediator.github.get_file_content")
+    @patch("claude_remediator.github.get_repo_tree")
+    @patch("claude_remediator.github.get_default_branch", return_value="main")
+    def test_skips_vault_encrypted_files(self, _mock_branch, mock_tree, mock_content):
+        mock_tree.side_effect = [
+            # top-level
+            [{"name": "roles", "path": "roles", "type": "dir", "size": 0}],
+            # roles/
+            [{"name": "db", "path": "roles/db", "type": "dir", "size": 0}],
+            # roles/db/
+            [{"name": "vars", "path": "roles/db/vars", "type": "dir", "size": 0}],
+            # roles/db/vars/
+            [
+                {
+                    "name": "main.yml",
+                    "path": "roles/db/vars/main.yml",
+                    "type": "file",
+                    "size": 100,
+                }
+            ],
+        ]
+        mock_content.return_value = "$ANSIBLE_VAULT;1.1;AES256\n6162636465660a..."
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._fetch_repo_context()
+
+        # Vault file should not appear in context
+        self.assertNotIn("ANSIBLE_VAULT", result)
+        self.assertNotIn("6162636465660a", result)
+
+    @patch("claude_remediator.github.get_file_content")
+    @patch("claude_remediator.github.get_repo_tree")
+    @patch("claude_remediator.github.get_default_branch", return_value="main")
+    def test_skips_large_files_by_size(self, _mock_branch, mock_tree, mock_content):
+        mock_tree.side_effect = [
+            # top-level
+            [{"name": "roles", "path": "roles", "type": "dir", "size": 0}],
+            # roles/
+            [{"name": "app", "path": "roles/app", "type": "dir", "size": 0}],
+            # roles/app/
+            [
+                {
+                    "name": "defaults",
+                    "path": "roles/app/defaults",
+                    "type": "dir",
+                    "size": 0,
+                }
+            ],
+            # roles/app/defaults/ — one small, one large
+            [
+                {
+                    "name": "main.yml",
+                    "path": "roles/app/defaults/main.yml",
+                    "type": "file",
+                    "size": 100,
+                },
+                {
+                    "name": "big.bin",
+                    "path": "roles/app/defaults/big.bin",
+                    "type": "file",
+                    "size": 999999,
+                },
+            ],
+        ]
+        mock_content.return_value = "pool_size: 50\n"
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._fetch_repo_context()
+
+        # Only the small file should be fetched
+        self.assertIn("pool_size", result)
+        self.assertEqual(mock_content.call_count, 1)
+
+    @patch("claude_remediator.github.get_repo_tree")
+    @patch("claude_remediator.github.get_default_branch", return_value="main")
+    def test_does_not_fetch_group_vars_or_inventory(self, _mock_branch, mock_tree):
+        """Directories that commonly contain secrets are not traversed."""
+        mock_tree.return_value = [
+            {"name": "group_vars", "path": "group_vars", "type": "dir", "size": 0},
+            {"name": "host_vars", "path": "host_vars", "type": "dir", "size": 0},
+            {"name": "inventory", "path": "inventory", "type": "dir", "size": 0},
+        ]
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._fetch_repo_context()
+
+        # Only 1 call for top-level — no further descent into secret dirs
+        self.assertEqual(mock_tree.call_count, 1)
+        self.assertNotIn("---", result)  # no file contents fetched
 
 
 class TestBuildAnomalySection(unittest.TestCase):

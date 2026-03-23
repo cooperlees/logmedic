@@ -129,21 +129,36 @@ def create_pull_request(
     return pr_result
 
 
-def get_repo_tree(token: str, repo: str, path: str = "") -> list[dict]:
+def get_default_branch(token: str, repo: str) -> str:
+    """Return the default branch name for a repo (e.g. ``"main"``)."""
+    repo_info = api(token, "GET", f"/repos/{repo}")
+    return repo_info["default_branch"]
+
+
+def get_repo_tree(token: str, repo: str, path: str = "", ref: str = "") -> list[dict]:
     """Fetch the file/directory listing for a repo path.
 
-    Returns a list of tree entries (dicts with ``path``, ``type``, ``size``).
-    Only the top-level entries are returned (non-recursive) so callers can
-    decide which sub-trees to descend into.
+    Uses the Contents API which supports ``ref:path`` natively and returns
+    size information for blobs.  Pass *ref* (e.g. a branch name) to avoid
+    an extra ``GET /repos/{repo}`` call on every invocation — callers that
+    make many tree requests should resolve the default branch once via
+    :func:`get_default_branch` and pass it here.
+
+    Returns a list of entry dicts.  Each entry has at least ``name``,
+    ``path``, ``type`` (``"file"`` or ``"dir"``), and ``size`` (bytes, 0
+    for dirs).
     """
-    repo_info = api(token, "GET", f"/repos/{repo}")
-    default_branch = repo_info["default_branch"]
-    sha = f"{default_branch}:{path}" if path else default_branch
-    tree = api(token, "GET", f"/repos/{repo}/git/trees/{sha}")
-    log.debug(
-        "repo tree %s:%s — %d entries", repo, path or "/", len(tree.get("tree", []))
+    contents_path = (
+        f"/repos/{repo}/contents/{path}" if path else f"/repos/{repo}/contents"
     )
-    return tree.get("tree", [])
+    if ref:
+        contents_path += f"?ref={ref}"
+
+    data = api(token, "GET", contents_path)
+    # Contents API returns a list for directories, single object for files.
+    entries = data if isinstance(data, list) else [data]
+    log.debug("repo tree %s:%s — %d entries", repo, path or "/", len(entries))
+    return entries
 
 
 def get_file_content(token: str, repo: str, path: str) -> str:

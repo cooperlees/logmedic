@@ -80,12 +80,21 @@ class RemediatorPlugin:
         actions = self._parse_response(response)
         log.debug("parsed %d actions from response", len(actions))
 
-        # Attach anomaly context to each action so execute() can embed it in PRs
-        # and check for duplicate PRs
-        for action in actions:
+        # Attach anomaly context to each valid action so execute() can embed
+        # it in PRs and check for duplicate PRs
+        safe_actions = []
+        for idx, action in enumerate(actions):
+            if not isinstance(action, dict):
+                log.warning(
+                    "skipping non-dict action at index %d (type=%s)",
+                    idx,
+                    type(action).__name__,
+                )
+                continue
             action["_anomaly_context"] = anomalies
+            safe_actions.append(action)
 
-        return json.dumps(actions)
+        return json.dumps(safe_actions)
 
     def execute(self, action_json: str) -> str:
         """Execute a proposed remediation action."""
@@ -164,118 +173,131 @@ class RemediatorPlugin:
             lines.append("")
         return "\n".join(lines)
 
+    # Ansible vault marker — files starting with this are encrypted blobs
+    _VAULT_HEADER = "$ANSIBLE_VAULT;"
+
     def _fetch_repo_context(self) -> str:
         """Fetch the default_repo tree and key file contents from GitHub.
 
         Returns a formatted string describing the repo structure and contents
-        of relevant files (Ansible roles, config, etc.) so Claude can propose
-        changes grounded in real code.  Returns an empty string if no repo is
-        configured or fetching fails.
+        of relevant files (Ansible roles defaults/tasks/vars/templates) so
+        Claude can propose changes grounded in real code.
+
+        Skips ``group_vars/``, ``host_vars/``, and ``inventory/`` which
+        commonly contain secrets or ansible-vault encrypted data.  Also skips
+        files that are ansible-vault encrypted (useless ciphertext) or exceed
+        ``max_file_size``.
+
+        Returns an empty string if no repo is configured or fetching fails.
         """
         if not self.default_repo or not self.github_token:
             return ""
 
+        # Resolve default branch once to avoid repeated /repos/{repo} calls
         try:
-            entries = github.get_repo_tree(self.github_token, self.default_repo)
+            ref = github.get_default_branch(self.github_token, self.default_repo)
+        except Exception as e:
+            log.warning("failed to get default branch for %s: %s", self.default_repo, e)
+            return ""
+
+        try:
+            entries = github.get_repo_tree(
+                self.github_token, self.default_repo, ref=ref
+            )
         except Exception as e:
             log.warning("failed to fetch repo tree for %s: %s", self.default_repo, e)
             return ""
 
-        lines = [f"Repository: {self.default_repo}", ""]
+        lines: list[str] = [f"Repository: {self.default_repo}", ""]
 
         # Show top-level structure
         lines.append("Top-level files and directories:")
         for entry in entries:
-            kind = "dir" if entry.get("type") == "tree" else "file"
-            lines.append(
-                f"  {entry['path']}/ " if kind == "dir" else f"  {entry['path']}"
-            )
+            is_dir = entry.get("type") == "dir"
+            lines.append(f"  {entry['name']}/" if is_dir else f"  {entry['name']}")
 
-        # Fetch contents of relevant config files (Ansible defaults, vars, tasks)
-        # Cap at a reasonable number to stay within token limits
-        interesting_dirs = []
-        for entry in entries:
-            if entry.get("type") == "tree" and entry["path"] in (
-                "roles",
-                "group_vars",
-                "host_vars",
-                "inventory",
-            ):
-                interesting_dirs.append(entry["path"])
-
+        # Only descend into roles/ — skip group_vars, host_vars, inventory
+        # which commonly contain secrets or vault-encrypted data.
         files_fetched = 0
         max_files = 15
         max_file_size = 4096
 
-        for dirname in interesting_dirs:
+        has_roles = any(
+            e.get("type") == "dir" and e.get("name") == "roles" for e in entries
+        )
+        if not has_roles:
+            log.debug("no roles/ directory found, skipping file content fetch")
+            return "\n".join(lines)
+
+        try:
+            role_entries = github.get_repo_tree(
+                self.github_token, self.default_repo, "roles", ref=ref
+            )
+        except Exception:
+            return "\n".join(lines)
+
+        for role in role_entries:
+            if files_fetched >= max_files:
+                break
+            if role.get("type") != "dir":
+                continue
             try:
-                sub_entries = github.get_repo_tree(
-                    self.github_token, self.default_repo, dirname
+                role_contents = github.get_repo_tree(
+                    self.github_token,
+                    self.default_repo,
+                    f"roles/{role['name']}",
+                    ref=ref,
                 )
             except Exception:
                 continue
-            for sub in sub_entries:
+            for role_sub in role_contents:
                 if files_fetched >= max_files:
                     break
-                # For roles/, descend one more level to get defaults/tasks/vars
-                if sub.get("type") == "tree" and dirname == "roles":
-                    try:
-                        role_entries = github.get_repo_tree(
-                            self.github_token,
-                            self.default_repo,
-                            f"{dirname}/{sub['path']}",
-                        )
-                    except Exception:
+                if role_sub.get("type") != "dir" or role_sub["name"] not in (
+                    "defaults",
+                    "tasks",
+                    "vars",
+                    "templates",
+                ):
+                    continue
+                try:
+                    leaf_entries = github.get_repo_tree(
+                        self.github_token,
+                        self.default_repo,
+                        f"roles/{role['name']}/{role_sub['name']}",
+                        ref=ref,
+                    )
+                except Exception:
+                    continue
+                for leaf in leaf_entries:
+                    if files_fetched >= max_files:
+                        break
+                    if leaf.get("type") != "file":
                         continue
-                    for role_sub in role_entries:
-                        if files_fetched >= max_files:
-                            break
-                        if role_sub.get("type") == "tree" and role_sub["path"] in (
-                            "defaults",
-                            "tasks",
-                            "vars",
-                            "templates",
-                        ):
-                            try:
-                                leaf_entries = github.get_repo_tree(
-                                    self.github_token,
-                                    self.default_repo,
-                                    f"{dirname}/{sub['path']}/{role_sub['path']}",
-                                )
-                            except Exception:
-                                continue
-                            for leaf in leaf_entries:
-                                if files_fetched >= max_files:
-                                    break
-                                if leaf.get("type") != "blob":
-                                    continue
-                                full_path = f"{dirname}/{sub['path']}/{role_sub['path']}/{leaf['path']}"
-                                try:
-                                    content = github.get_file_content(
-                                        self.github_token,
-                                        self.default_repo,
-                                        full_path,
-                                    )
-                                    if len(content) <= max_file_size:
-                                        lines.append(f"\n--- {full_path} ---")
-                                        lines.append(content)
-                                        files_fetched += 1
-                                except Exception:
-                                    continue
-                elif sub.get("type") == "blob":
-                    full_path = f"{dirname}/{sub['path']}"
+                    # Skip large files before fetching content
+                    if leaf.get("size", 0) > max_file_size:
+                        log.debug(
+                            "skipping large file %s (%d bytes)",
+                            leaf["path"],
+                            leaf.get("size", 0),
+                        )
+                        continue
+                    full_path = leaf["path"]
                     try:
                         content = github.get_file_content(
                             self.github_token,
                             self.default_repo,
                             full_path,
                         )
-                        if len(content) <= max_file_size:
-                            lines.append(f"\n--- {full_path} ---")
-                            lines.append(content)
-                            files_fetched += 1
                     except Exception:
                         continue
+                    # Skip ansible-vault encrypted files
+                    if content.startswith(self._VAULT_HEADER):
+                        log.debug("skipping vault-encrypted file %s", full_path)
+                        continue
+                    lines.append(f"\n--- {full_path} ---")
+                    lines.append(content)
+                    files_fetched += 1
 
         log.info(
             "fetched repo context for %s: %d files, %d chars",

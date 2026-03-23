@@ -177,43 +177,79 @@ class TestCreatePullRequest(unittest.TestCase):
         self.assertIn("403", str(ctx.exception))
 
 
-class TestGetRepoTree(unittest.TestCase):
-    """Test the get_repo_tree() function."""
+class TestGetDefaultBranch(unittest.TestCase):
+    """Test the get_default_branch() function."""
 
     @patch("github.api")
-    def test_returns_tree_entries(self, mock_api):
-        mock_api.side_effect = [
-            {"default_branch": "main"},
-            {
-                "tree": [
-                    {"path": "roles", "type": "tree", "sha": "abc"},
-                    {"path": "README.md", "type": "blob", "sha": "def", "size": 100},
-                ]
-            },
+    def test_returns_branch_name(self, mock_api):
+        mock_api.return_value = {"default_branch": "main"}
+
+        result = github.get_default_branch("ghp_tok", "cooperlees/clc_ansible")
+
+        self.assertEqual(result, "main")
+        mock_api.assert_called_once_with(
+            "ghp_tok", "GET", "/repos/cooperlees/clc_ansible"
+        )
+
+
+class TestGetRepoTree(unittest.TestCase):
+    """Test the get_repo_tree() function (Contents API)."""
+
+    @patch("github.api")
+    def test_returns_entries(self, mock_api):
+        mock_api.return_value = [
+            {"name": "roles", "path": "roles", "type": "dir", "size": 0},
+            {"name": "README.md", "path": "README.md", "type": "file", "size": 100},
         ]
 
         result = github.get_repo_tree("ghp_tok", "cooperlees/clc_ansible")
 
         self.assertEqual(len(result), 2)
-        self.assertEqual(result[0]["path"], "roles")
-        self.assertEqual(result[0]["type"], "tree")
-        self.assertEqual(result[1]["path"], "README.md")
+        self.assertEqual(result[0]["name"], "roles")
+        self.assertEqual(result[0]["type"], "dir")
+        self.assertEqual(result[1]["name"], "README.md")
+        mock_api.assert_called_once_with(
+            "ghp_tok", "GET", "/repos/cooperlees/clc_ansible/contents"
+        )
 
     @patch("github.api")
-    def test_with_subpath(self, mock_api):
-        mock_api.side_effect = [
-            {"default_branch": "main"},
-            {"tree": [{"path": "defaults", "type": "tree", "sha": "x"}]},
+    def test_with_subpath_and_ref(self, mock_api):
+        mock_api.return_value = [
+            {
+                "name": "defaults",
+                "path": "roles/nginx/defaults",
+                "type": "dir",
+                "size": 0,
+            }
         ]
 
         result = github.get_repo_tree(
-            "ghp_tok", "cooperlees/clc_ansible", "roles/nginx"
+            "ghp_tok", "cooperlees/clc_ansible", "roles/nginx", ref="main"
         )
 
-        # Should request main:roles/nginx
-        tree_call = mock_api.call_args_list[1]
-        self.assertIn("main:roles/nginx", tree_call[0][2])
+        mock_api.assert_called_once_with(
+            "ghp_tok",
+            "GET",
+            "/repos/cooperlees/clc_ansible/contents/roles/nginx?ref=main",
+        )
         self.assertEqual(len(result), 1)
+
+    @patch("github.api")
+    def test_single_file_wrapped_in_list(self, mock_api):
+        """Contents API returns a single object for a file, not a list."""
+        mock_api.return_value = {
+            "name": "main.yml",
+            "path": "roles/nginx/defaults/main.yml",
+            "type": "file",
+            "size": 50,
+        }
+
+        result = github.get_repo_tree(
+            "ghp_tok", "cooperlees/clc_ansible", "roles/nginx/defaults/main.yml"
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["name"], "main.yml")
 
     @patch("github.api")
     def test_error_propagates(self, mock_api):
