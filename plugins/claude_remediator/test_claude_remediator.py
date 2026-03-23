@@ -507,7 +507,9 @@ class TestBuildPrompts(unittest.TestCase):
 
     def test_system_prompt_includes_repo_context(self):
         plugin = RemediatorPlugin(_make_settings())
-        prompt = plugin._build_system_prompt(repo_context="roles/nginx/defaults/main.yml:\nworker_connections: 1024")
+        prompt = plugin._build_system_prompt(
+            repo_context="roles/nginx/defaults/main.yml:\nworker_connections: 1024"
+        )
         self.assertIn("Repository structure", prompt)
         self.assertIn("worker_connections", prompt)
 
@@ -653,7 +655,10 @@ class TestPrDedup(unittest.TestCase):
     @patch("claude_remediator.github.create_pull_request")
     def test_creates_pr_when_no_existing(self, mock_create, mock_find):
         mock_find.return_value = []
-        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/100", "number": 100}
+        mock_create.return_value = {
+            "html_url": "https://github.com/cooperlees/clc_ansible/pull/100",
+            "number": 100,
+        }
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._execute_pr(
@@ -670,7 +675,10 @@ class TestPrDedup(unittest.TestCase):
     def test_dedup_error_proceeds_with_creation(self, mock_create, mock_find):
         """If the dedup search fails, we still try to create the PR."""
         mock_find.side_effect = RuntimeError("search API error")
-        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/101", "number": 101}
+        mock_create.return_value = {
+            "html_url": "https://github.com/cooperlees/clc_ansible/pull/101",
+            "number": 101,
+        }
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._execute_pr(
@@ -689,7 +697,10 @@ class TestPrLogContext(unittest.TestCase):
     @patch("claude_remediator.github.create_pull_request")
     def test_pr_body_includes_anomaly_section(self, mock_create, mock_find):
         mock_find.return_value = []
-        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/50", "number": 50}
+        mock_create.return_value = {
+            "html_url": "https://github.com/cooperlees/clc_ansible/pull/50",
+            "number": 50,
+        }
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         plugin._execute_pr(
@@ -706,7 +717,10 @@ class TestPrLogContext(unittest.TestCase):
 
     @patch("claude_remediator.github.create_pull_request")
     def test_pr_body_unchanged_without_anomalies(self, mock_create):
-        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/51", "number": 51}
+        mock_create.return_value = {
+            "html_url": "https://github.com/cooperlees/clc_ansible/pull/51",
+            "number": 51,
+        }
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         plugin._execute_pr(PR_ACTION["kind"]["pull_request"])
@@ -735,7 +749,9 @@ class TestProposeAttachesContext(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("_anomaly_context", result[0])
         self.assertEqual(len(result[0]["_anomaly_context"]), 1)
-        self.assertEqual(result[0]["_anomaly_context"][0]["pattern"], SAMPLE_ANOMALIES[0]["pattern"])
+        self.assertEqual(
+            result[0]["_anomaly_context"][0]["pattern"], SAMPLE_ANOMALIES[0]["pattern"]
+        )
 
 
 if __name__ == "__main__":

@@ -140,7 +140,9 @@ def get_repo_tree(token: str, repo: str, path: str = "") -> list[dict]:
     default_branch = repo_info["default_branch"]
     sha = f"{default_branch}:{path}" if path else default_branch
     tree = api(token, "GET", f"/repos/{repo}/git/trees/{sha}")
-    log.debug("repo tree %s:%s — %d entries", repo, path or "/", len(tree.get("tree", [])))
+    log.debug(
+        "repo tree %s:%s — %d entries", repo, path or "/", len(tree.get("tree", []))
+    )
     return tree.get("tree", [])
 
 

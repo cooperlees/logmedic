@@ -187,13 +187,20 @@ class RemediatorPlugin:
         lines.append("Top-level files and directories:")
         for entry in entries:
             kind = "dir" if entry.get("type") == "tree" else "file"
-            lines.append(f"  {entry['path']}/ " if kind == "dir" else f"  {entry['path']}")
+            lines.append(
+                f"  {entry['path']}/ " if kind == "dir" else f"  {entry['path']}"
+            )
 
         # Fetch contents of relevant config files (Ansible defaults, vars, tasks)
         # Cap at a reasonable number to stay within token limits
         interesting_dirs = []
         for entry in entries:
-            if entry.get("type") == "tree" and entry["path"] in ("roles", "group_vars", "host_vars", "inventory"):
+            if entry.get("type") == "tree" and entry["path"] in (
+                "roles",
+                "group_vars",
+                "host_vars",
+                "inventory",
+            ):
                 interesting_dirs.append(entry["path"])
 
         files_fetched = 0
@@ -202,7 +209,9 @@ class RemediatorPlugin:
 
         for dirname in interesting_dirs:
             try:
-                sub_entries = github.get_repo_tree(self.github_token, self.default_repo, dirname)
+                sub_entries = github.get_repo_tree(
+                    self.github_token, self.default_repo, dirname
+                )
             except Exception:
                 continue
             for sub in sub_entries:
@@ -212,7 +221,9 @@ class RemediatorPlugin:
                 if sub.get("type") == "tree" and dirname == "roles":
                     try:
                         role_entries = github.get_repo_tree(
-                            self.github_token, self.default_repo, f"{dirname}/{sub['path']}"
+                            self.github_token,
+                            self.default_repo,
+                            f"{dirname}/{sub['path']}",
                         )
                     except Exception:
                         continue
@@ -220,7 +231,10 @@ class RemediatorPlugin:
                         if files_fetched >= max_files:
                             break
                         if role_sub.get("type") == "tree" and role_sub["path"] in (
-                            "defaults", "tasks", "vars", "templates",
+                            "defaults",
+                            "tasks",
+                            "vars",
+                            "templates",
                         ):
                             try:
                                 leaf_entries = github.get_repo_tree(
@@ -238,7 +252,9 @@ class RemediatorPlugin:
                                 full_path = f"{dirname}/{sub['path']}/{role_sub['path']}/{leaf['path']}"
                                 try:
                                     content = github.get_file_content(
-                                        self.github_token, self.default_repo, full_path,
+                                        self.github_token,
+                                        self.default_repo,
+                                        full_path,
                                     )
                                     if len(content) <= max_file_size:
                                         lines.append(f"\n--- {full_path} ---")
@@ -250,7 +266,9 @@ class RemediatorPlugin:
                     full_path = f"{dirname}/{sub['path']}"
                     try:
                         content = github.get_file_content(
-                            self.github_token, self.default_repo, full_path,
+                            self.github_token,
+                            self.default_repo,
+                            full_path,
                         )
                         if len(content) <= max_file_size:
                             lines.append(f"\n--- {full_path} ---")
@@ -263,7 +281,7 @@ class RemediatorPlugin:
             "fetched repo context for %s: %d files, %d chars",
             self.default_repo,
             files_fetched,
-            sum(len(l) for l in lines),
+            sum(len(line) for line in lines),
         )
         return "\n".join(lines)
 
@@ -370,9 +388,9 @@ class RemediatorPlugin:
             if samples:
                 lines.append("- **Sample log lines**:")
                 for s in samples[:3]:
-                    lines.append(f"  ```")
+                    lines.append("  ```")
                     lines.append(f"  {s}")
-                    lines.append(f"  ```")
+                    lines.append("  ```")
             lines.append("")
         return "\n".join(lines)
 

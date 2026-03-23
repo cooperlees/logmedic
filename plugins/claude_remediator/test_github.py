@@ -206,7 +206,9 @@ class TestGetRepoTree(unittest.TestCase):
             {"tree": [{"path": "defaults", "type": "tree", "sha": "x"}]},
         ]
 
-        result = github.get_repo_tree("ghp_tok", "cooperlees/clc_ansible", "roles/nginx")
+        result = github.get_repo_tree(
+            "ghp_tok", "cooperlees/clc_ansible", "roles/nginx"
+        )
 
         # Should request main:roles/nginx
         tree_call = mock_api.call_args_list[1]
@@ -232,18 +234,24 @@ class TestGetFileContent(unittest.TestCase):
         encoded = base64.b64encode(content.encode()).decode()
         mock_api.return_value = {"content": encoded, "encoding": "base64"}
 
-        result = github.get_file_content("ghp_tok", "cooperlees/clc_ansible", "roles/api/defaults/main.yml")
+        result = github.get_file_content(
+            "ghp_tok", "cooperlees/clc_ansible", "roles/api/defaults/main.yml"
+        )
 
         self.assertEqual(result, content)
         mock_api.assert_called_once_with(
-            "ghp_tok", "GET", "/repos/cooperlees/clc_ansible/contents/roles/api/defaults/main.yml"
+            "ghp_tok",
+            "GET",
+            "/repos/cooperlees/clc_ansible/contents/roles/api/defaults/main.yml",
         )
 
     @patch("github.api")
     def test_non_base64_content(self, mock_api):
         mock_api.return_value = {"content": "raw text", "encoding": "none"}
 
-        result = github.get_file_content("ghp_tok", "cooperlees/clc_ansible", "README.md")
+        result = github.get_file_content(
+            "ghp_tok", "cooperlees/clc_ansible", "README.md"
+        )
 
         self.assertEqual(result, "raw text")
 
@@ -283,7 +291,9 @@ class TestFindOpenPrs(unittest.TestCase):
     def test_no_results(self, mock_api):
         mock_api.return_value = {"total_count": 0, "items": []}
 
-        result = github.find_open_prs("ghp_tok", "cooperlees/clc_ansible", ["some pattern"])
+        result = github.find_open_prs(
+            "ghp_tok", "cooperlees/clc_ansible", ["some pattern"]
+        )
 
         self.assertEqual(result, [])
 
