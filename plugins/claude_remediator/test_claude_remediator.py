@@ -52,22 +52,22 @@ def _claude_api_response(actions_json, stop_reason="end_turn"):
 
 
 # The kind of JSON Claude would return for a PR-based fix
-PR_ACTION = {
+PR_DATA: dict = {
+    "repo": "cooperlees/clc_ansible",
+    "branch": "fix/db-connection-pool",
+    "title": "fix: increase database connection pool size",
+    "body": "The API server is exhausting its connection pool under load.",
+    "files_changed": [
+        {
+            "path": "roles/api-server/defaults/main.yml",
+            "content": "db_pool_size: 50\ndb_pool_timeout: 30\n",
+        },
+    ],
+}
+
+PR_ACTION: dict = {
     "description": "Fix database connection pool configuration",
-    "kind": {
-        "pull_request": {
-            "repo": "cooperlees/clc_ansible",
-            "branch": "fix/db-connection-pool",
-            "title": "fix: increase database connection pool size",
-            "body": "The API server is exhausting its connection pool under load.",
-            "files_changed": [
-                {
-                    "path": "roles/api-server/defaults/main.yml",
-                    "content": "db_pool_size: 50\ndb_pool_timeout: 30\n",
-                },
-            ],
-        }
-    },
+    "kind": {"pull_request": PR_DATA},
     "status": "proposed",
 }
 
@@ -331,7 +331,7 @@ class TestExecute(unittest.TestCase):
             branch="fix/db-connection-pool",
             title="fix: increase database connection pool size",
             body="The API server is exhausting its connection pool under load.",
-            files=PR_ACTION["kind"]["pull_request"]["files_changed"],  # type: ignore[index]
+            files=PR_DATA["files_changed"],
         )
 
     @patch("claude_remediator.github.create_pull_request")
@@ -642,7 +642,7 @@ class TestPrDedup(unittest.TestCase):
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._execute_pr(
-            PR_ACTION["kind"]["pull_request"],
+            PR_DATA,
             anomalies=SAMPLE_ANOMALIES,
         )
 
@@ -662,7 +662,7 @@ class TestPrDedup(unittest.TestCase):
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._execute_pr(
-            PR_ACTION["kind"]["pull_request"],
+            PR_DATA,
             anomalies=SAMPLE_ANOMALIES,
         )
 
@@ -682,7 +682,7 @@ class TestPrDedup(unittest.TestCase):
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._execute_pr(
-            PR_ACTION["kind"]["pull_request"],
+            PR_DATA,
             anomalies=SAMPLE_ANOMALIES,
         )
 
@@ -704,7 +704,7 @@ class TestPrLogContext(unittest.TestCase):
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         plugin._execute_pr(
-            PR_ACTION["kind"]["pull_request"],
+            PR_DATA,
             anomalies=SAMPLE_ANOMALIES,
         )
 
@@ -723,7 +723,7 @@ class TestPrLogContext(unittest.TestCase):
         }
 
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
-        plugin._execute_pr(PR_ACTION["kind"]["pull_request"])
+        plugin._execute_pr(PR_DATA)
 
         call_kwargs = mock_create.call_args[1]
         body = call_kwargs["body"]
