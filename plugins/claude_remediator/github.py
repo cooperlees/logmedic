@@ -127,3 +127,59 @@ def create_pull_request(
     )
     log.debug("PR created: %s (#%d)", pr_result["html_url"], pr_result["number"])
     return pr_result
+
+
+def get_repo_tree(token: str, repo: str, path: str = "") -> list[dict]:
+    """Fetch the file/directory listing for a repo path.
+
+    Returns a list of tree entries (dicts with ``path``, ``type``, ``size``).
+    Only the top-level entries are returned (non-recursive) so callers can
+    decide which sub-trees to descend into.
+    """
+    repo_info = api(token, "GET", f"/repos/{repo}")
+    default_branch = repo_info["default_branch"]
+    sha = f"{default_branch}:{path}" if path else default_branch
+    tree = api(token, "GET", f"/repos/{repo}/git/trees/{sha}")
+    log.debug("repo tree %s:%s — %d entries", repo, path or "/", len(tree.get("tree", [])))
+    return tree.get("tree", [])
+
+
+def get_file_content(token: str, repo: str, path: str) -> str:
+    """Fetch the decoded text content of a single file from a repo."""
+    import base64
+
+    data = api(token, "GET", f"/repos/{repo}/contents/{path}")
+    if data.get("encoding") == "base64":
+        return base64.b64decode(data["content"]).decode(errors="replace")
+    return data.get("content", "")
+
+
+def find_open_prs(token: str, repo: str, search_terms: list[str]) -> list[dict]:
+    """Search for open PRs whose title or body matches any of the search terms.
+
+    Uses the GitHub search API with the ``is:pr is:open repo:<repo>`` qualifier
+    combined with the given terms.  Returns a (possibly empty) list of PR
+    result dicts containing ``number``, ``title``, ``html_url``, and ``body``.
+    """
+    if not search_terms:
+        return []
+
+    # Build an OR query from the search terms (quoted for exact matching)
+    terms_query = " OR ".join(f'"{t}"' for t in search_terms[:5])  # cap at 5
+    q = f"is:pr is:open repo:{repo} {terms_query}"
+    log.debug("searching PRs: q=%s", q)
+
+    from urllib.parse import quote
+
+    data = api(token, "GET", f"/search/issues?q={quote(q)}&per_page=10")
+    items = data.get("items", [])
+    log.debug("PR search returned %d results", len(items))
+    return [
+        {
+            "number": item["number"],
+            "title": item["title"],
+            "html_url": item["html_url"],
+            "body": item.get("body", ""),
+        }
+        for item in items
+    ]

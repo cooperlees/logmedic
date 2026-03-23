@@ -177,5 +177,134 @@ class TestCreatePullRequest(unittest.TestCase):
         self.assertIn("403", str(ctx.exception))
 
 
+class TestGetRepoTree(unittest.TestCase):
+    """Test the get_repo_tree() function."""
+
+    @patch("github.api")
+    def test_returns_tree_entries(self, mock_api):
+        mock_api.side_effect = [
+            {"default_branch": "main"},
+            {
+                "tree": [
+                    {"path": "roles", "type": "tree", "sha": "abc"},
+                    {"path": "README.md", "type": "blob", "sha": "def", "size": 100},
+                ]
+            },
+        ]
+
+        result = github.get_repo_tree("ghp_tok", "cooperlees/clc_ansible")
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["path"], "roles")
+        self.assertEqual(result[0]["type"], "tree")
+        self.assertEqual(result[1]["path"], "README.md")
+
+    @patch("github.api")
+    def test_with_subpath(self, mock_api):
+        mock_api.side_effect = [
+            {"default_branch": "main"},
+            {"tree": [{"path": "defaults", "type": "tree", "sha": "x"}]},
+        ]
+
+        result = github.get_repo_tree("ghp_tok", "cooperlees/clc_ansible", "roles/nginx")
+
+        # Should request main:roles/nginx
+        tree_call = mock_api.call_args_list[1]
+        self.assertIn("main:roles/nginx", tree_call[0][2])
+        self.assertEqual(len(result), 1)
+
+    @patch("github.api")
+    def test_error_propagates(self, mock_api):
+        mock_api.side_effect = RuntimeError("404")
+
+        with self.assertRaises(RuntimeError):
+            github.get_repo_tree("ghp_tok", "cooperlees/clc_ansible")
+
+
+class TestGetFileContent(unittest.TestCase):
+    """Test the get_file_content() function."""
+
+    @patch("github.api")
+    def test_base64_content(self, mock_api):
+        import base64
+
+        content = "db_pool_size: 50\n"
+        encoded = base64.b64encode(content.encode()).decode()
+        mock_api.return_value = {"content": encoded, "encoding": "base64"}
+
+        result = github.get_file_content("ghp_tok", "cooperlees/clc_ansible", "roles/api/defaults/main.yml")
+
+        self.assertEqual(result, content)
+        mock_api.assert_called_once_with(
+            "ghp_tok", "GET", "/repos/cooperlees/clc_ansible/contents/roles/api/defaults/main.yml"
+        )
+
+    @patch("github.api")
+    def test_non_base64_content(self, mock_api):
+        mock_api.return_value = {"content": "raw text", "encoding": "none"}
+
+        result = github.get_file_content("ghp_tok", "cooperlees/clc_ansible", "README.md")
+
+        self.assertEqual(result, "raw text")
+
+
+class TestFindOpenPrs(unittest.TestCase):
+    """Test the find_open_prs() function."""
+
+    @patch("github.api")
+    def test_returns_matching_prs(self, mock_api):
+        mock_api.return_value = {
+            "total_count": 1,
+            "items": [
+                {
+                    "number": 42,
+                    "title": "fix: connection pool",
+                    "html_url": "https://github.com/cooperlees/clc_ansible/pull/42",
+                    "body": "Fix connection refused errors",
+                },
+            ],
+        }
+
+        result = github.find_open_prs(
+            "ghp_tok",
+            "cooperlees/clc_ansible",
+            ["connection refused to database"],
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["number"], 42)
+        # Verify search query format
+        call_path = mock_api.call_args[0][2]
+        self.assertIn("is%3Apr", call_path)
+        self.assertIn("is%3Aopen", call_path)
+        self.assertIn("cooperlees/clc_ansible", call_path)
+
+    @patch("github.api")
+    def test_no_results(self, mock_api):
+        mock_api.return_value = {"total_count": 0, "items": []}
+
+        result = github.find_open_prs("ghp_tok", "cooperlees/clc_ansible", ["some pattern"])
+
+        self.assertEqual(result, [])
+
+    def test_empty_search_terms(self):
+        """No API call when search_terms is empty."""
+        result = github.find_open_prs("ghp_tok", "cooperlees/clc_ansible", [])
+        self.assertEqual(result, [])
+
+    @patch("github.api")
+    def test_caps_search_terms_at_five(self, mock_api):
+        mock_api.return_value = {"total_count": 0, "items": []}
+
+        terms = [f"pattern_{i}" for i in range(10)]
+        github.find_open_prs("ghp_tok", "cooperlees/clc_ansible", terms)
+
+        call_path = mock_api.call_args[0][2]
+        # Only first 5 terms should be in the query
+        self.assertIn("pattern_0", call_path)
+        self.assertIn("pattern_4", call_path)
+        self.assertNotIn("pattern_5", call_path)
+
+
 if __name__ == "__main__":
     unittest.main()
