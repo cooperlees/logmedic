@@ -505,6 +505,12 @@ class TestBuildPrompts(unittest.TestCase):
         prompt = plugin._build_system_prompt()
         self.assertIn("Ansible", prompt)
 
+    def test_system_prompt_includes_repo_context(self):
+        plugin = RemediatorPlugin(_make_settings())
+        prompt = plugin._build_system_prompt(repo_context="roles/nginx/defaults/main.yml:\nworker_connections: 1024")
+        self.assertIn("Repository structure", prompt)
+        self.assertIn("worker_connections", prompt)
+
     def test_user_prompt_contains_anomaly_data(self):
         plugin = RemediatorPlugin(_make_settings())
         prompt = plugin._build_user_prompt(SAMPLE_ANOMALIES)
@@ -549,6 +555,187 @@ class TestBuildPrompts(unittest.TestCase):
             body="Adds upgrade task.",
             files=wrong_repo_pr["files_changed"],
         )
+
+
+class TestFetchRepoContext(unittest.TestCase):
+    """Test _fetch_repo_context() which fetches files from the default repo."""
+
+    @patch("claude_remediator.github.get_file_content")
+    @patch("claude_remediator.github.get_repo_tree")
+    def test_fetches_repo_tree_and_files(self, mock_tree, mock_content):
+        mock_tree.side_effect = [
+            # top-level
+            [
+                {"path": "roles", "type": "tree"},
+                {"path": "README.md", "type": "blob"},
+            ],
+            # roles/
+            [{"path": "nginx", "type": "tree"}],
+            # roles/nginx/
+            [{"path": "defaults", "type": "tree"}, {"path": "tasks", "type": "tree"}],
+            # roles/nginx/defaults/
+            [{"path": "main.yml", "type": "blob"}],
+            # roles/nginx/tasks/
+            [{"path": "main.yml", "type": "blob"}],
+        ]
+        mock_content.side_effect = [
+            "worker_connections: 1024\n",
+            "- name: install nginx\n",
+        ]
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._fetch_repo_context()
+
+        self.assertIn("cooperlees/clc_ansible", result)
+        self.assertIn("roles/", result)
+        self.assertIn("worker_connections", result)
+        self.assertIn("install nginx", result)
+        self.assertEqual(mock_content.call_count, 2)
+
+    def test_returns_empty_without_repo(self):
+        plugin = RemediatorPlugin(_make_settings(default_repo=""))
+        self.assertEqual(plugin._fetch_repo_context(), "")
+
+    def test_returns_empty_without_token(self):
+        plugin = RemediatorPlugin(_make_settings(github_token=""))
+        self.assertEqual(plugin._fetch_repo_context(), "")
+
+    @patch("claude_remediator.github.get_repo_tree")
+    def test_handles_api_error_gracefully(self, mock_tree):
+        mock_tree.side_effect = RuntimeError("403 forbidden")
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._fetch_repo_context()
+        self.assertEqual(result, "")
+
+
+class TestBuildAnomalySection(unittest.TestCase):
+    """Test the static _build_anomaly_section() method."""
+
+    def test_formats_anomaly_context(self):
+        section = RemediatorPlugin._build_anomaly_section(SAMPLE_ANOMALIES)
+        self.assertIn("Triggering Log Anomalies", section)
+        self.assertIn("connection refused", section)
+        self.assertIn("150 occurrences", section)
+        self.assertIn("api-server", section)
+        self.assertIn("10.0.0.5:5432", section)
+
+    def test_empty_anomalies(self):
+        self.assertEqual(RemediatorPlugin._build_anomaly_section([]), "")
+
+
+class TestPrDedup(unittest.TestCase):
+    """Test that _execute_pr() checks for existing open PRs."""
+
+    @patch("claude_remediator.github.find_open_prs")
+    @patch("claude_remediator.github.create_pull_request")
+    def test_skips_when_existing_pr_found(self, mock_create, mock_find):
+        mock_find.return_value = [
+            {
+                "number": 99,
+                "title": "fix: connection pool",
+                "html_url": "https://github.com/cooperlees/clc_ansible/pull/99",
+                "body": "...",
+            }
+        ]
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._execute_pr(
+            PR_ACTION["kind"]["pull_request"],
+            anomalies=SAMPLE_ANOMALIES,
+        )
+
+        self.assertIn("applied", result)
+        self.assertTrue(result.get("skipped"))
+        self.assertIn("pull/99", result["reason"])
+        mock_create.assert_not_called()
+
+    @patch("claude_remediator.github.find_open_prs")
+    @patch("claude_remediator.github.create_pull_request")
+    def test_creates_pr_when_no_existing(self, mock_create, mock_find):
+        mock_find.return_value = []
+        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/100", "number": 100}
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._execute_pr(
+            PR_ACTION["kind"]["pull_request"],
+            anomalies=SAMPLE_ANOMALIES,
+        )
+
+        self.assertIn("applied", result)
+        self.assertNotIn("skipped", result)
+        mock_create.assert_called_once()
+
+    @patch("claude_remediator.github.find_open_prs")
+    @patch("claude_remediator.github.create_pull_request")
+    def test_dedup_error_proceeds_with_creation(self, mock_create, mock_find):
+        """If the dedup search fails, we still try to create the PR."""
+        mock_find.side_effect = RuntimeError("search API error")
+        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/101", "number": 101}
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        result = plugin._execute_pr(
+            PR_ACTION["kind"]["pull_request"],
+            anomalies=SAMPLE_ANOMALIES,
+        )
+
+        self.assertIn("applied", result)
+        mock_create.assert_called_once()
+
+
+class TestPrLogContext(unittest.TestCase):
+    """Test that PR body includes triggering log line context."""
+
+    @patch("claude_remediator.github.find_open_prs")
+    @patch("claude_remediator.github.create_pull_request")
+    def test_pr_body_includes_anomaly_section(self, mock_create, mock_find):
+        mock_find.return_value = []
+        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/50", "number": 50}
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        plugin._execute_pr(
+            PR_ACTION["kind"]["pull_request"],
+            anomalies=SAMPLE_ANOMALIES,
+        )
+
+        # Check the body passed to create_pull_request includes anomaly context
+        call_kwargs = mock_create.call_args
+        body = call_kwargs[1]["body"] if call_kwargs[1] else call_kwargs[0][4]
+        self.assertIn("Triggering Log Anomalies", body)
+        self.assertIn("connection refused", body)
+        self.assertIn("150 occurrences", body)
+
+    @patch("claude_remediator.github.create_pull_request")
+    def test_pr_body_unchanged_without_anomalies(self, mock_create):
+        mock_create.return_value = {"html_url": "https://github.com/cooperlees/clc_ansible/pull/51", "number": 51}
+
+        plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
+        plugin._execute_pr(PR_ACTION["kind"]["pull_request"])
+
+        call_kwargs = mock_create.call_args[1]
+        body = call_kwargs["body"]
+        self.assertNotIn("Triggering Log Anomalies", body)
+
+
+class TestProposeAttachesContext(unittest.TestCase):
+    """Test that propose() attaches anomaly context to returned actions."""
+
+    @patch("claude_remediator.RemediatorPlugin._fetch_repo_context")
+    @patch("claude_remediator.urlopen")
+    def test_actions_include_anomaly_context(self, mock_urlopen, mock_fetch):
+        mock_fetch.return_value = ""
+        resp = MagicMock()
+        resp.read.return_value = _claude_api_response(json.dumps([PR_ACTION]))
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = RemediatorPlugin(_make_settings())
+        result = json.loads(plugin.propose(_anomalies_json(SAMPLE_ANOMALIES)))
+
+        self.assertEqual(len(result), 1)
+        self.assertIn("_anomaly_context", result[0])
+        self.assertEqual(len(result[0]["_anomaly_context"]), 1)
+        self.assertEqual(result[0]["_anomaly_context"][0]["pattern"], SAMPLE_ANOMALIES[0]["pattern"])
 
 
 if __name__ == "__main__":
