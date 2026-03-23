@@ -65,7 +65,11 @@ class RemediatorPlugin:
             return "[]"
 
         log.debug("proposing remediations for %d anomalies", len(anomalies))
-        system = self._build_system_prompt()
+
+        # Fetch repo context so Claude can see actual files
+        repo_context = self._fetch_repo_context()
+
+        system = self._build_system_prompt(repo_context)
         user_msg = self._build_user_prompt(anomalies)
         log.debug(
             "system prompt length=%d, user prompt length=%d", len(system), len(user_msg)
@@ -75,12 +79,28 @@ class RemediatorPlugin:
         log.debug("claude response length=%d", len(response))
         actions = self._parse_response(response)
         log.debug("parsed %d actions from response", len(actions))
-        return json.dumps(actions)
+
+        # Attach anomaly context to each valid action so execute() can embed
+        # it in PRs and check for duplicate PRs
+        safe_actions = []
+        for idx, action in enumerate(actions):
+            if not isinstance(action, dict):
+                log.warning(
+                    "skipping non-dict action at index %d (type=%s)",
+                    idx,
+                    type(action).__name__,
+                )
+                continue
+            action["_anomaly_context"] = anomalies
+            safe_actions.append(action)
+
+        return json.dumps(safe_actions)
 
     def execute(self, action_json: str) -> str:
         """Execute a proposed remediation action."""
         action = json.loads(action_json)
         kind = action.get("kind", {})
+        anomaly_context = action.get("_anomaly_context", [])
         log.debug(
             "executing action: description=%s kind_keys=%s",
             action.get("description", "?"),
@@ -88,7 +108,7 @@ class RemediatorPlugin:
         )
 
         if "pull_request" in kind:
-            result = self._execute_pr(kind["pull_request"])
+            result = self._execute_pr(kind["pull_request"], anomaly_context)
         elif "ssh_command" in kind:
             if not self.enable_ssh:
                 log.warning("SSH action rejected: enable_ssh is false")
@@ -108,7 +128,7 @@ class RemediatorPlugin:
         log.debug("execute result: %s", list(result.keys()))
         return json.dumps(result)
 
-    def _build_system_prompt(self) -> str:
+    def _build_system_prompt(self, repo_context: str = "") -> str:
         base = (
             "You are a senior SRE / DevOps engineer. You are given high-frequency "
             "log error patterns from production systems. Your job is to:\n"
@@ -132,6 +152,8 @@ class RemediatorPlugin:
                 f'repo "{self.default_repo}" unless a different repo is clearly '
                 f"indicated by the anomaly context."
             )
+        if repo_context:
+            base += f"\n\nRepository structure and contents:\n{repo_context}"
         if self.system_prompt:
             base += f"\n\nAdditional infrastructure context:\n{self.system_prompt}"
         return base
@@ -149,6 +171,140 @@ class RemediatorPlugin:
                 for s in a["samples"][:3]:
                     lines.append(f"  {s}")
             lines.append("")
+        return "\n".join(lines)
+
+    # Ansible vault marker — files starting with this are encrypted blobs
+    _VAULT_HEADER = "$ANSIBLE_VAULT;"
+
+    def _fetch_repo_context(self) -> str:
+        """Fetch the default_repo tree and key file contents from GitHub.
+
+        Returns a formatted string describing the repo structure and contents
+        of relevant files (Ansible roles defaults/tasks/vars/templates) so
+        Claude can propose changes grounded in real code.
+
+        Skips ``group_vars/``, ``host_vars/``, and ``inventory/`` which
+        commonly contain secrets or ansible-vault encrypted data.  Also skips
+        files that are ansible-vault encrypted (useless ciphertext) or exceed
+        ``max_file_size``.
+
+        Returns an empty string if no repo is configured or fetching fails.
+        """
+        if not self.default_repo or not self.github_token:
+            return ""
+
+        # Resolve default branch once to avoid repeated /repos/{repo} calls
+        try:
+            ref = github.get_default_branch(self.github_token, self.default_repo)
+        except Exception as e:
+            log.warning("failed to get default branch for %s: %s", self.default_repo, e)
+            return ""
+
+        try:
+            entries = github.get_repo_tree(
+                self.github_token, self.default_repo, ref=ref
+            )
+        except Exception as e:
+            log.warning("failed to fetch repo tree for %s: %s", self.default_repo, e)
+            return ""
+
+        lines: list[str] = [f"Repository: {self.default_repo}", ""]
+
+        # Show top-level structure
+        lines.append("Top-level files and directories:")
+        for entry in entries:
+            is_dir = entry.get("type") == "dir"
+            lines.append(f"  {entry['name']}/" if is_dir else f"  {entry['name']}")
+
+        # Only descend into roles/ — skip group_vars, host_vars, inventory
+        # which commonly contain secrets or vault-encrypted data.
+        files_fetched = 0
+        max_files = 15
+        max_file_size = 4096
+
+        has_roles = any(
+            e.get("type") == "dir" and e.get("name") == "roles" for e in entries
+        )
+        if not has_roles:
+            log.debug("no roles/ directory found, skipping file content fetch")
+            return "\n".join(lines)
+
+        try:
+            role_entries = github.get_repo_tree(
+                self.github_token, self.default_repo, "roles", ref=ref
+            )
+        except Exception:
+            return "\n".join(lines)
+
+        for role in role_entries:
+            if files_fetched >= max_files:
+                break
+            if role.get("type") != "dir":
+                continue
+            try:
+                role_contents = github.get_repo_tree(
+                    self.github_token,
+                    self.default_repo,
+                    f"roles/{role['name']}",
+                    ref=ref,
+                )
+            except Exception:
+                continue
+            for role_sub in role_contents:
+                if files_fetched >= max_files:
+                    break
+                if role_sub.get("type") != "dir" or role_sub["name"] not in (
+                    "defaults",
+                    "tasks",
+                    "vars",
+                    "templates",
+                ):
+                    continue
+                try:
+                    leaf_entries = github.get_repo_tree(
+                        self.github_token,
+                        self.default_repo,
+                        f"roles/{role['name']}/{role_sub['name']}",
+                        ref=ref,
+                    )
+                except Exception:
+                    continue
+                for leaf in leaf_entries:
+                    if files_fetched >= max_files:
+                        break
+                    if leaf.get("type") != "file":
+                        continue
+                    # Skip large files before fetching content
+                    if leaf.get("size", 0) > max_file_size:
+                        log.debug(
+                            "skipping large file %s (%d bytes)",
+                            leaf["path"],
+                            leaf.get("size", 0),
+                        )
+                        continue
+                    full_path = leaf["path"]
+                    try:
+                        content = github.get_file_content(
+                            self.github_token,
+                            self.default_repo,
+                            full_path,
+                        )
+                    except Exception:
+                        continue
+                    # Skip ansible-vault encrypted files
+                    if content.startswith(self._VAULT_HEADER):
+                        log.debug("skipping vault-encrypted file %s", full_path)
+                        continue
+                    lines.append(f"\n--- {full_path} ---")
+                    lines.append(content)
+                    files_fetched += 1
+
+        log.info(
+            "fetched repo context for %s: %d files, %d chars",
+            self.default_repo,
+            files_fetched,
+            sum(len(line) for line in lines),
+        )
         return "\n".join(lines)
 
     def _call_claude(self, system: str, user_msg: str) -> str:
@@ -229,13 +385,50 @@ class RemediatorPlugin:
                 }
             ]
 
-    def _execute_pr(self, pr: dict) -> dict:
+    @staticmethod
+    def _build_anomaly_section(anomalies: list) -> str:
+        """Format anomaly context as a markdown section for PR bodies."""
+        if not anomalies:
+            return ""
+        lines = [
+            "",
+            "---",
+            "## Triggering Log Anomalies",
+            "",
+            "This PR was automatically generated by [logmedic](https://github.com/cooperlees/logmedic) "
+            "in response to the following high-frequency log patterns:",
+            "",
+        ]
+        for a in anomalies:
+            lines.append(f"### `{a.get('level', 'unknown').upper()}` — {a['pattern']}")
+            lines.append(f"- **Count**: {a['count']} occurrences")
+            labels = a.get("labels", {})
+            if labels:
+                label_str = ", ".join(f"`{k}={v}`" for k, v in labels.items())
+                lines.append(f"- **Labels**: {label_str}")
+            samples = a.get("samples", [])
+            if samples:
+                lines.append("- **Sample log lines**:")
+                for s in samples[:3]:
+                    lines.append("  ```")
+                    lines.append(f"  {s}")
+                    lines.append("  ```")
+            lines.append("")
+        return "\n".join(lines)
+
+    def _execute_pr(self, pr: dict, anomalies: list | None = None) -> dict:
         """Create a PR using the GitHub REST API.
 
         Delegates to the ``github`` module which uses the Git Data API to
         create a commit on a new branch, then the Pulls API to open the PR.
         No local git or gh CLI required.
+
+        Before creating the PR, checks whether an open PR already addresses
+        the same anomaly patterns.  If so, skips creation to avoid duplicates.
         """
+        if anomalies is None:
+            anomalies = []
+
         repo = pr.get("repo", self.default_repo)
         if self.default_repo and repo != self.default_repo:
             log.warning(
@@ -256,6 +449,31 @@ class RemediatorPlugin:
         if not self.github_token:
             log.error("no github_token configured")
             return {"failed": {"reason": "no github_token configured"}}
+
+        # --- Dedup: check for existing open PRs matching these anomaly patterns ---
+        if anomalies:
+            search_terms = [a["pattern"] for a in anomalies if a.get("pattern")]
+            try:
+                existing = github.find_open_prs(self.github_token, repo, search_terms)
+                if existing:
+                    urls = ", ".join(p["html_url"] for p in existing)
+                    log.info(
+                        "skipping PR creation — existing open PR(s) already address "
+                        "these anomaly patterns: %s",
+                        urls,
+                    )
+                    return {
+                        "applied": None,
+                        "skipped": True,
+                        "reason": f"existing open PR(s): {urls}",
+                    }
+            except Exception as e:
+                log.warning("PR dedup search failed, proceeding with creation: %s", e)
+
+        # --- Append triggering log line context to PR body ---
+        anomaly_section = self._build_anomaly_section(anomalies)
+        if anomaly_section:
+            body = body + anomaly_section
 
         try:
             github.create_pull_request(
