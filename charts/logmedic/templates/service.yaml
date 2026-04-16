@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "logmedic.fullname" . }}
+  labels:
+    {{- include "logmedic.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - name: http
+      protocol: TCP
+      port: {{ .Values.service.port }}
+      targetPort: http
+  selector:
+    {{- include "logmedic.selectorLabels" . | nindent 4 }}

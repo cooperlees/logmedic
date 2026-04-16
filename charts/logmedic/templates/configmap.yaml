@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "logmedic.fullname" . }}
+  labels:
+    {{- include "logmedic.labels" . | nindent 4 }}
+data:
+  config.toml: |
+{{- .Values.logmedic.config | nindent 4 }}

@@ -1,0 +1,8 @@
+1. Check rollout status:
+   kubectl rollout status deploy/{{ include "logmedic.fullname" . }} -n {{ .Release.Namespace }}
+
+2. Port-forward the metrics/health endpoint locally:
+   kubectl port-forward svc/{{ include "logmedic.fullname" . }} 6969:{{ .Values.service.port }} -n {{ .Release.Namespace }}
+
+3. Verify health:
+   curl -fsS http://127.0.0.1:6969/healthz
