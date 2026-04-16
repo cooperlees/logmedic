@@ -6,4 +6,4 @@ metadata:
     {{- include "logmedic.labels" . | nindent 4 }}
 data:
   config.toml: |
-{{- .Values.logmedic.config | nindent 4 }}
+{{ .Values.logmedic.config | nindent 4 }}

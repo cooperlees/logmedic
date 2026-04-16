@@ -238,7 +238,7 @@ secrets:
   name: logmedic-api-keys
 ```
 
-or let Helm create one:
+or let Helm create one (not recommended for production — see warning below):
 
 ```yaml
 secrets:
@@ -246,6 +246,11 @@ secrets:
   anthropicApiKey: "sk-ant-..."
   githubToken: "ghp_..."
 ```
+
+> **⚠️ Security warning:** Helm stores all release values (including any tokens you pass via
+> `secrets.anthropicApiKey` / `secrets.githubToken`) in an in-cluster Secret and they may also
+> end up in GitOps repositories or CI logs. For production deployments, pre-create the Secret
+> outside of Helm and reference it with `secrets.name` instead of using `secrets.create`.
 
 Then verify health:
 
