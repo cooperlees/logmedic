@@ -233,7 +233,7 @@ kind = "ai"
 path = "/opt/plugins/logmedic-plugins/python/team_remediator.py"
 ```
 
-Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths (for example: `git clone https://github.com/myorg/logmedic-plugins /opt/plugins/logmedic-plugins` or `git clone git@github.com:myorg/logmedic-plugins.git /opt/plugins/logmedic-plugins`).
+Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths (for example, either `git clone https://github.com/myorg/logmedic-plugins /opt/plugins/logmedic-plugins` or `git clone git@github.com:myorg/logmedic-plugins.git /opt/plugins/logmedic-plugins`, depending on your auth method).
 
 ## Configuration
 
