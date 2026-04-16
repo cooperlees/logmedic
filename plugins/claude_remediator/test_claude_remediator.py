@@ -284,13 +284,14 @@ class TestPropose(unittest.TestCase):
         """HTTP errors from the Claude API should include the response body."""
         from urllib.error import HTTPError
         from io import BytesIO
+        from http.client import HTTPMessage
 
         error_body = b'{"type":"error","error":{"type":"invalid_request_error","message":"model: claude-sonnet-4-20250514 is not available"}}'
         err = HTTPError(
             "https://api.anthropic.com/v1/messages",
             400,
             "Bad Request",
-            {},  # type: ignore[arg-type]
+            HTTPMessage(),
             BytesIO(error_body),
         )
         mock_urlopen.side_effect = err
