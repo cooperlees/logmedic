@@ -10,6 +10,9 @@ FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS builder
 
 ARG TARGETARCH
 
+# Retry up to 2 times on transient failures; log every retry verbosely so failures are visible.
+RUN printf 'Acquire::Retries "2";\nDebug::Acquire::http "true";\n' > /etc/apt/apt.conf.d/80-retries
+
 # Install base system dependencies common to all architectures.
 # sudo is required because .github/scripts/cross_compile.py uses it throughout;
 # Docker builds run as root so sudo becomes a passthrough, but the binary must exist.
@@ -80,6 +83,9 @@ RUN case "$TARGETARCH" in \
 # The binary links dynamically against libpython3.13, so the runtime must provide it.
 # Ubuntu 24.04 ships Python 3.12 by default; deadsnakes is required for 3.13.
 FROM ubuntu:24.04
+
+# Retry up to 2 times on transient failures; log every retry verbosely so failures are visible.
+RUN printf 'Acquire::Retries "2";\nDebug::Acquire::http "true";\n' > /etc/apt/apt.conf.d/80-retries
 
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
