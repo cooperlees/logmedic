@@ -63,7 +63,9 @@ spec:
               CA_PATH = f"{SA_DIR}/ca.crt"
               NS_PATH = f"{SA_DIR}/namespace"
 
-              POD_NAME = os.environ["POD_NAME"]
+              POD_NAME = os.getenv("POD_NAME")
+              if not POD_NAME:
+                  raise SystemExit("POD_NAME is not set; configure it via Kubernetes downward API")
               POD_NAMESPACE = os.getenv("POD_NAMESPACE")
               if not POD_NAMESPACE and os.path.exists(NS_PATH):
                   POD_NAMESPACE = pathlib.Path(NS_PATH).read_text(encoding="utf-8").strip()
@@ -74,9 +76,12 @@ spec:
               LEASE_DURATION = int(os.getenv("LOGMEDIC_LEASE_DURATION_SECONDS", "30"))
               RENEW_INTERVAL = int(os.getenv("LOGMEDIC_LEASE_RENEW_INTERVAL_SECONDS", "10"))
               STANDBY_POLL = int(os.getenv("LOGMEDIC_STANDBY_POLL_SECONDS", "5"))
+              KUBE_API_TIMEOUT_SECONDS = int(os.getenv("LOGMEDIC_KUBE_API_TIMEOUT_SECONDS", "10"))
+              GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS = int(os.getenv("LOGMEDIC_GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS", "15"))
+              FORCE_KILL_TIMEOUT_SECONDS = int(os.getenv("LOGMEDIC_FORCE_KILL_TIMEOUT_SECONDS", "5"))
               CONFIG_PATH = {{ .Values.logmedic.configPath | quote }}
-              HEARTBEAT_FILE = "/tmp/logmedic-heartbeat"
-              ACTIVE_FILE = "/tmp/logmedic-active"
+              HEARTBEAT_FILE = os.getenv("LOGMEDIC_HEARTBEAT_FILE", "/tmp/logmedic-heartbeat")
+              ACTIVE_FILE = os.getenv("LOGMEDIC_ACTIVE_FILE", "/tmp/logmedic-active")
 
               if not os.path.exists(TOKEN_PATH):
                   raise SystemExit("service account token not found; active/passive mode requires service account token mounting")
@@ -84,6 +89,8 @@ spec:
 
               if not API_HOST:
                   raise SystemExit("KUBERNETES_SERVICE_HOST is not set")
+              if not API_PORT:
+                  raise SystemExit("KUBERNETES_SERVICE_PORT_HTTPS is not set")
               base_url = f"https://{API_HOST}:{API_PORT}"
               lease_path = f"/apis/coordination.k8s.io/v1/namespaces/{POD_NAMESPACE}/leases/{LEASE_NAME}"
               ssl_ctx = ssl.create_default_context(cafile=CA_PATH)
@@ -91,7 +98,7 @@ spec:
               def now_iso() -> str:
                   return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
 
-              def parse_time(value: str | None):
+              def parse_time(value):
                   if not value:
                       return None
                   try:
@@ -114,7 +121,7 @@ spec:
                       },
                   )
                   try:
-                      with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as resp:
+                      with urllib.request.urlopen(req, context=ssl_ctx, timeout=KUBE_API_TIMEOUT_SECONDS) as resp:
                           raw = resp.read()
                           return resp.status, json.loads(raw.decode("utf-8")) if raw else {}
                   except urllib.error.HTTPError as e:
@@ -172,7 +179,7 @@ spec:
 
               child = None
               while True:
-                  pathlib.Path(HEARTBEAT_FILE).write_text(now_iso(), encoding="utf-8")
+                  pathlib.Path(HEARTBEAT_FILE).touch(exist_ok=True)
                   try:
                       status, lease_obj = get_lease()
                       if status == 404:
@@ -199,10 +206,13 @@ spec:
                           if child is not None and child.poll() is None:
                               child.terminate()
                               try:
-                                  child.wait(timeout=15)
+                                  child.wait(timeout=GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS)
                               except Exception:
                                   child.kill()
-                                  child.wait(timeout=5)
+                                  try:
+                                      child.wait(timeout=FORCE_KILL_TIMEOUT_SECONDS)
+                                  except Exception:
+                                      pass
                           child = None
 
                       time.sleep(RENEW_INTERVAL if leader else STANDBY_POLL)
@@ -213,10 +223,13 @@ spec:
                       if child is not None and child.poll() is None:
                           child.terminate()
                           try:
-                              child.wait(timeout=10)
+                              child.wait(timeout=GRACEFUL_SHUTDOWN_TIMEOUT_SECONDS)
                           except Exception:
                               child.kill()
-                              child.wait(timeout=5)
+                              try:
+                                  child.wait(timeout=FORCE_KILL_TIMEOUT_SECONDS)
+                              except Exception:
+                                  pass
                       child = None
                       time.sleep(STANDBY_POLL)
           {{- else }}
@@ -233,7 +246,16 @@ spec:
               command:
                 - python3.13
                 - -c
-                - import os,time,sys; p="/tmp/logmedic-heartbeat"; sys.exit(0 if os.path.exists(p) and (time.time()-os.path.getmtime(p)) < {{ .Values.activePassive.livenessHeartbeatTimeoutSeconds }} else 1)
+                - |
+                  import os
+                  import sys
+                  import time
+
+                  path = os.getenv("LOGMEDIC_HEARTBEAT_FILE", "/tmp/logmedic-heartbeat")
+                  if not os.path.exists(path):
+                      raise SystemExit(1)
+                  age = time.time() - os.path.getmtime(path)
+                  raise SystemExit(0 if age < {{ .Values.activePassive.livenessHeartbeatTimeoutSeconds }} else 1)
             initialDelaySeconds: 20
             periodSeconds: 30
           readinessProbe:
@@ -241,7 +263,12 @@ spec:
               command:
                 - python3.13
                 - -c
-                - import os,sys; sys.exit(0 if os.path.exists("/tmp/logmedic-active") else 1)
+                - |
+                  import os
+                  import sys
+
+                  path = os.getenv("LOGMEDIC_ACTIVE_FILE", "/tmp/logmedic-active")
+                  raise SystemExit(0 if os.path.exists(path) else 1)
             initialDelaySeconds: 5
             periodSeconds: 10
           {{- else }}
@@ -286,13 +313,17 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: LOGMEDIC_LEASE_NAME
-              value: {{ default (printf "%s-active-passive" (include "logmedic.fullname" .)) .Values.activePassive.leaseName | quote }}
+              value: {{ default (printf "%s-lease" (include "logmedic.fullname" .)) .Values.activePassive.leaseName | quote }}
             - name: LOGMEDIC_LEASE_DURATION_SECONDS
               value: {{ .Values.activePassive.leaseDurationSeconds | quote }}
             - name: LOGMEDIC_LEASE_RENEW_INTERVAL_SECONDS
               value: {{ .Values.activePassive.renewIntervalSeconds | quote }}
             - name: LOGMEDIC_STANDBY_POLL_SECONDS
               value: {{ .Values.activePassive.standbyPollSeconds | quote }}
+            - name: LOGMEDIC_HEARTBEAT_FILE
+              value: "/tmp/logmedic-heartbeat"
+            - name: LOGMEDIC_ACTIVE_FILE
+              value: "/tmp/logmedic-active"
             {{- end }}
           {{- end }}
           volumeMounts:

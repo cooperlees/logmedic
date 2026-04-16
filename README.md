@@ -369,6 +369,8 @@ What this does:
 - Runs exactly one active leader loop at a time.
 - Keeps one passive standby pod ready to take over if the active pod/node is drained or lost.
 - Prefers spreading the two pods onto different nodes (`kubernetes.io/hostname`) by default.
+- Requires the Ubuntu image variant (Python-enabled) for the built-in leader-election wrapper.
+- If you set a custom `.Values.affinity`, that custom affinity overrides the default node-spread preference.
 
 Current limitations:
 - Runtime processing state is not shared between pods; failover starts from the new leader’s in-memory state.
