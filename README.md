@@ -173,18 +173,32 @@ pattern = "database timeout" # non-reserved keys (everything except kind/path) a
 
 logmedic embeds CPython via PyO3. The embedded interpreter uses the **system Python 3.13's site-packages**, so any third-party packages your plugin imports must be installed into that interpreter before logmedic starts.
 
-**Docker (recommended):** extend the official Ubuntu image and install your deps at build time. Ship a `requirements.txt` alongside your plugin:
+Declare your plugin's dependencies in a `pyproject.toml` file alongside your plugin. Using `pyproject.toml` is preferred over `requirements.txt` because it supports metadata, version constraints, and works with all modern Python tooling:
+
+```toml
+# plugins/my_detector/pyproject.toml
+[project]
+name = "my-detector"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.27",
+    "structlog>=24.0",
+]
+```
+
+**Docker (recommended):** extend the official Ubuntu image and install your deps at build time:
 
 ```dockerfile
 FROM cooperlees/logmedic:latest-ubuntu
 
-# Install python3-pip once, then add your plugin's deps
+# Install python3-pip once, then install your plugin as a package
 RUN apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      python3.13-venv python3-pip && \
+      python3-pip && \
     rm -rf /var/lib/apt/lists/*
 COPY plugins/ /plugins/
-RUN python3.13 -m pip install --break-system-packages -r /plugins/my_detector/requirements.txt
+RUN python3.13 -m pip install --break-system-packages /plugins/my_detector/
 
 ENTRYPOINT ["/logmedic"]
 ```
@@ -192,7 +206,7 @@ ENTRYPOINT ["/logmedic"]
 **Bare metal:** install deps into the same Python 3.13 that logmedic was compiled against:
 
 ```bash
-python3.13 -m pip install -r plugins/my_detector/requirements.txt
+python3.13 -m pip install plugins/my_detector/
 ```
 
 > The distroless image (`cooperlees/logmedic:latest`) is built without Python support (`--no-default-features`) and cannot run Python plugins. Use the Ubuntu image as the base when Python plugins are needed.
