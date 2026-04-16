@@ -6,7 +6,7 @@ Can raise PRs via the GitHub REST API or SSH into hosts to apply fixes.
 
 Settings (passed via TOML config):
     anthropic_api_key: str  - Anthropic API key
-    model: str              - Model to use (default: claude-sonnet-4-6)
+    model: str              - Model to use (default: claude-opus-4-6)
     max_tokens: int         - Max tokens for Claude response (default: 16384)
     github_token: str       - GitHub token for raising PRs
     default_repo: str       - Default repo for PRs (e.g. "org/ansible-infra")
@@ -36,7 +36,7 @@ class RemediatorPlugin:
         self.api_key = raw.get(
             "anthropic_api_key", os.environ.get("ANTHROPIC_API_KEY", "")
         )
-        self.model = raw.get("model", "claude-sonnet-4-6")
+        self.model = raw.get("model", "claude-opus-4-6")
         self.github_token = raw.get("github_token", os.environ.get("GITHUB_TOKEN", ""))
         self.default_repo = raw.get("default_repo", "")
         self.auto_execute = raw.get("auto_execute", False)

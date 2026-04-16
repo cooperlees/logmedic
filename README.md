@@ -60,7 +60,7 @@ kind = "ai"
 
 [remediators.settings]
 path = "plugins/claude_remediator/claude_remediator.py"
-model = "claude-sonnet-4-20250514"
+model = "claude-opus-4-6"
 default_repo = "myorg/infra"     # repo to open PRs against
 ```
 
@@ -176,7 +176,7 @@ kind = "ai"
 
 [remediators.settings]
 path = "plugins/claude_remediator/claude_remediator.py"
-model = "claude-sonnet-4-20250514"
+model = "claude-opus-4-6"
 # anthropic_api_key = ""      # or set ANTHROPIC_API_KEY env var
 # default_repo = "myorg/infra-ansible"
 # ssh_key_path = "~/.ssh/id_ed25519"
