@@ -196,7 +196,6 @@ impl Detector for SimpleDetector {
 }
 
 #[no_mangle]
-// This is `unsafe` because it is called across a dynamic-library boundary.
 pub unsafe fn create_detector(_settings: &str) -> Box<dyn Detector> {
     Box::new(SimpleDetector)
 }
@@ -234,7 +233,7 @@ kind = "ai"
 path = "/opt/plugins/logmedic-plugins/python/team_remediator.py"
 ```
 
-Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths.
+Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths (for example: `git clone https://github.com/myorg/logmedic-plugins /opt/plugins/logmedic-plugins`).
 
 ## Configuration
 
