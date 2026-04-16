@@ -165,7 +165,7 @@ Configure it:
 ```toml
 [plugins.simple_python]
 kind = "python"
-path = "/absolute/path/to/simple_detector.py"
+path = "/opt/logmedic/plugins/simple_detector.py"
 pattern = "database timeout" # non-reserved keys are included in settings_json
 ```
 
@@ -196,7 +196,7 @@ impl Detector for SimpleDetector {
 }
 
 #[no_mangle]
-// This is `unsafe` because this symbol is called across the shared-library FFI boundary.
+// This is `unsafe` to match logmedic's expected exported symbol type.
 pub unsafe fn create_detector(_settings: &str) -> Box<dyn Detector> {
     Box::new(SimpleDetector)
 }
@@ -207,7 +207,7 @@ Configure it:
 ```toml
 [plugins.simple_native]
 kind = "native"
-path = "/absolute/path/to/libsimple_detector.so" # .dylib on macOS
+path = "/opt/logmedic/plugins/libsimple_detector.so" # .dylib on macOS
 ```
 
 #### Using plugins from another repository
