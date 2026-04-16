@@ -151,7 +151,7 @@ import json
 
 class DetectorPlugin:
     def __init__(self, settings: dict):
-        # logmedic passes plugin settings as JSON in settings["settings_json"]
+        # logmedic passes plugin settings as JSON in settings['settings_json']
         cfg = json.loads(settings.get("settings_json", "{}"))
         self.pattern = cfg.get("pattern", "ERROR")
 
@@ -166,7 +166,7 @@ Configure it:
 [plugins.simple_python]
 kind = "python"
 path = "/absolute/path/to/simple_detector.py"
-pattern = "database timeout" # arbitrary plugin keys are included in settings_json
+pattern = "database timeout" # non-reserved keys are included in settings_json
 ```
 
 #### Rust example (native detector)
