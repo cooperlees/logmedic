@@ -1,0 +1,82 @@
+replicaCount: 1
+
+image:
+  repository: cooperlees/logmedic
+  pullPolicy: IfNotPresent
+  tag: latest-ubuntu
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext: {}
+
+securityContext: {}
+
+service:
+  type: ClusterIP
+  port: 6969
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 100m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+logmedic:
+  configPath: /etc/logmedic/config.toml
+  config: |
+    [daemon]
+    poll_interval_secs = 300
+    frequency_threshold = 50
+    lookback = "1h"
+    metrics_port = 6969
+
+    [plugins.loki]
+    kind = "python"
+    path = "/plugins/loki_detector/loki_detector.py"
+    loki_url = "http://loki:3100"
+
+    [remediators.claude]
+    kind = "ai"
+    path = "/plugins/claude_remediator/claude_remediator.py"
+    model = "claude-sonnet-4-20250514"
+
+secrets:
+  create: false
+  name: ""
+  anthropicApiKey: ""
+  githubToken: ""
+
+env: []
+extraVolumeMounts: []
+extraVolumes: []
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 20
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 15
