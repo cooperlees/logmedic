@@ -169,6 +169,34 @@ path = "/opt/logmedic/plugins/simple_detector.py"
 pattern = "database timeout" # non-reserved keys (everything except kind/path) are in settings_json
 ```
 
+#### Python plugin dependencies (PyPI packages)
+
+logmedic embeds CPython via PyO3. The embedded interpreter uses the **system Python 3.13's site-packages**, so any third-party packages your plugin imports must be installed into that interpreter before logmedic starts.
+
+**Docker (recommended):** extend the official Ubuntu image and install your deps at build time. Ship a `requirements.txt` alongside your plugin:
+
+```dockerfile
+FROM cooperlees/logmedic:latest-ubuntu
+
+# Install python3-pip once, then add your plugin's deps
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3.13-venv python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+COPY plugins/ /plugins/
+RUN python3.13 -m pip install --break-system-packages -r /plugins/my_detector/requirements.txt
+
+ENTRYPOINT ["/logmedic"]
+```
+
+**Bare metal:** install deps into the same Python 3.13 that logmedic was compiled against:
+
+```bash
+python3.13 -m pip install -r plugins/my_detector/requirements.txt
+```
+
+> The distroless image (`cooperlees/logmedic:latest`) is built without Python support (`--no-default-features`) and cannot run Python plugins. Use the Ubuntu image as the base when Python plugins are needed.
+
 #### Rust example (native detector)
 
 Create a `cdylib` that exports `create_detector`:
