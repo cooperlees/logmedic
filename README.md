@@ -151,6 +151,7 @@ import json
 
 class DetectorPlugin:
     def __init__(self, settings: dict):
+        # logmedic passes plugin settings as JSON in settings["settings_json"]
         cfg = json.loads(settings.get("settings_json", "{}"))
         self.pattern = cfg.get("pattern", "ERROR")
 
@@ -165,7 +166,7 @@ Configure it:
 [plugins.simple_python]
 kind = "python"
 path = "/absolute/path/to/simple_detector.py"
-pattern = "database timeout"
+pattern = "database timeout" # arbitrary plugin keys are included in settings_json
 ```
 
 #### Rust example (native detector)
@@ -195,6 +196,7 @@ impl Detector for SimpleDetector {
 }
 
 #[no_mangle]
+// This is `unsafe` because this symbol is called across the shared-library FFI boundary.
 pub unsafe fn create_detector(_settings: &str) -> Box<dyn Detector> {
     Box::new(SimpleDetector)
 }
