@@ -2,7 +2,7 @@
 Loki detector plugin for logmedic.
 
 Queries Grafana Loki for high-frequency error/warning log lines.
-Requires `requests` to be installed in the Python environment.
+Uses only Python stdlib (no third-party packages required).
 
 Settings (passed via TOML config):
     loki_url: str        - Loki base URL (e.g. "http://loki:3100")

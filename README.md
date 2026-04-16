@@ -46,19 +46,13 @@ poll_interval_secs = 300
 frequency_threshold = 50
 lookback = "1h"
 
-[[plugins]]
-name = "loki"
+[plugins.loki]
 kind = "python"
 path = "plugins/loki_detector/loki_detector.py"
-
-[plugins.settings]
 loki_url = "http://loki:3100"    # adjust to your Loki endpoint
 
-[[remediators]]
-name = "claude"
+[remediators.claude]
 kind = "ai"
-
-[remediators.settings]
 path = "plugins/claude_remediator/claude_remediator.py"
 model = "claude-opus-4-6"
 default_repo = "myorg/infra"     # repo to open PRs against
@@ -146,9 +140,142 @@ Remediators take anomalies and fix them. They implement the `Remediator` trait w
 
 ### Writing your own plugins
 
-**Python plugins** — Create a `.py` file with a `DetectorPlugin` or `RemediatorPlugin` class. See the included plugins for the interface.
+logmedic supports Python plugins and native shared-library plugins.
 
-**Native plugins** — Build a Rust shared library (`.so`/`.dylib`) exporting `create_detector` or `create_remediator` functions that return `Box<dyn Detector>` or `Box<dyn Remediator>`.
+#### Python example (detector)
+
+Create a Python module with a `DetectorPlugin` class:
+
+```python
+import json
+
+class DetectorPlugin:
+    def __init__(self, settings: dict):
+        # logmedic passes plugin settings as JSON in settings['settings_json']
+        cfg = json.loads(settings.get("settings_json", "{}"))
+        self.pattern = cfg.get("pattern", "ERROR")
+
+    def detect(self, lookback: str, threshold: int):
+        # Return list[dict] with at least "pattern" and "count"
+        return [{"pattern": self.pattern, "count": threshold + 1}]
+```
+
+Configure it:
+
+```toml
+[plugins.simple_python]
+kind = "python"
+path = "/opt/logmedic/plugins/simple_detector.py"
+pattern = "database timeout" # non-reserved keys (everything except kind/path) are in settings_json
+```
+
+#### Python plugin dependencies (PyPI packages)
+
+logmedic embeds CPython via PyO3. The embedded interpreter uses the **system Python 3.13's site-packages**, so any third-party packages your plugin imports must be installed into that interpreter before logmedic starts.
+
+Declare your plugin's dependencies in a `pyproject.toml` file alongside your plugin. Using `pyproject.toml` is preferred over `requirements.txt` because it supports metadata, version constraints, and works with all modern Python tooling:
+
+```toml
+# plugins/my_detector/pyproject.toml
+[project]
+name = "my-detector"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "httpx>=0.27",
+    "structlog>=24.0",
+]
+```
+
+**Docker (recommended):** extend the official Ubuntu image and install your deps at build time:
+
+```dockerfile
+FROM cooperlees/logmedic:latest-ubuntu
+
+# Install python3-pip once, then install your plugin as a package
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+COPY plugins/ /plugins/
+RUN python3.13 -m pip install --break-system-packages /plugins/my_detector/
+
+ENTRYPOINT ["/logmedic"]
+```
+
+**Bare metal:** install deps into the same Python 3.13 that logmedic was compiled against:
+
+```bash
+python3.13 -m pip install plugins/my_detector/
+```
+
+> The distroless image (`cooperlees/logmedic:latest`) is built without Python support (`--no-default-features`) and cannot run Python plugins. Use the Ubuntu image as the base when Python plugins are needed.
+
+#### Rust example (native detector)
+
+Create a `cdylib` that exports `create_detector`:
+
+```rust
+use async_trait::async_trait;
+use logmedic::detect::{Detector, LogAnomaly, LogLevel};
+use logmedic::error::PluginError;
+
+struct SimpleDetector;
+
+#[async_trait]
+impl Detector for SimpleDetector {
+    fn name(&self) -> &str { "simple-native" }
+
+    async fn detect(&self, _lookback: &str, threshold: u64) -> Result<Vec<LogAnomaly>, PluginError> {
+        Ok(vec![LogAnomaly {
+            pattern: "native example".to_string(),
+            count: threshold + 1,
+            level: LogLevel::Error,
+            labels: Default::default(),
+            samples: vec!["example log line".to_string()],
+        }])
+    }
+}
+
+#[no_mangle]
+pub unsafe fn create_detector(_settings: &str) -> Box<dyn Detector> {
+    Box::new(SimpleDetector)
+}
+```
+
+Configure it:
+
+```toml
+[plugins.simple_native]
+kind = "native"
+path = "/opt/logmedic/plugins/libsimple_detector.so" # .dylib on macOS
+```
+
+#### Using plugins from another repository
+
+This is supported today: plugin paths can point anywhere on disk, including another local git checkout.
+
+```toml
+[plugins.shared_team_detector]
+kind = "python"
+path = "/opt/plugins/logmedic-plugins/python/team_detector.py"
+```
+
+```toml
+[plugins.shared_team_native]
+kind = "native"
+path = "/opt/plugins/logmedic-plugins/target/release/libteam_detector.so"
+```
+
+For remediators, set `path` on the remediator table in the same way:
+
+```toml
+[remediators.shared_team_fixer]
+kind = "ai"
+path = "/opt/plugins/logmedic-plugins/python/team_remediator.py"
+```
+
+Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths (for example, either `git clone https://github.com/myorg/logmedic-plugins /opt/plugins/logmedic-plugins` or `git clone git@github.com:myorg/logmedic-plugins.git /opt/plugins/logmedic-plugins`, depending on your auth method).
 
 ## Configuration
 
@@ -159,22 +286,16 @@ frequency_threshold = 50   # min occurrences to flag a pattern
 lookback = "1h"            # time window for log queries
 metrics_port = 6969        # Prometheus /metrics endpoint
 
-[[plugins]]
-name = "loki"
+[plugins.loki]
 kind = "python"
 path = "plugins/loki_detector/loki_detector.py"
-
-[plugins.settings]
 loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
 # deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies from these Loki stream labels
 
-[[remediators]]
-name = "claude"
+[remediators.claude]
 kind = "ai"
-
-[remediators.settings]
 path = "plugins/claude_remediator/claude_remediator.py"
 model = "claude-opus-4-6"
 # anthropic_api_key = ""      # or set ANTHROPIC_API_KEY env var
