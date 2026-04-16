@@ -166,7 +166,7 @@ Configure it:
 [plugins.simple_python]
 kind = "python"
 path = "/opt/logmedic/plugins/simple_detector.py"
-pattern = "database timeout" # non-reserved keys are included in settings_json
+pattern = "database timeout" # non-reserved keys (everything except kind/path) are in settings_json
 ```
 
 #### Rust example (native detector)
@@ -233,7 +233,7 @@ kind = "ai"
 path = "/opt/plugins/logmedic-plugins/python/team_remediator.py"
 ```
 
-Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths (for example: `git clone https://github.com/myorg/logmedic-plugins /opt/plugins/logmedic-plugins`).
+Note: logmedic does not clone git repositories automatically. Clone/sync external plugin repos separately, then reference their plugin files with absolute paths (for example: `git clone https://github.com/myorg/logmedic-plugins /opt/plugins/logmedic-plugins` or `git clone git@github.com:myorg/logmedic-plugins.git /opt/plugins/logmedic-plugins`).
 
 ## Configuration
 
