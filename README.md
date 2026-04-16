@@ -196,7 +196,7 @@ impl Detector for SimpleDetector {
 }
 
 #[no_mangle]
-// This is `unsafe` to match logmedic's expected exported symbol type.
+// This is `unsafe` because it is called across a dynamic-library boundary.
 pub unsafe fn create_detector(_settings: &str) -> Box<dyn Detector> {
     Box::new(SimpleDetector)
 }
