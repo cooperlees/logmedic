@@ -144,10 +144,13 @@ jobs:
       - name: Set up aarch64 Linux cross-compilation
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: python3 .github/scripts/cross_compile.py
-      - name: Set PYO3_PYTHON for Windows
+      - name: Set PYO3_PYTHON and Python library path for Windows
         if: runner.os == 'Windows'
         shell: bash
-        run: echo "PYO3_PYTHON=python" >> $GITHUB_ENV
+        run: |
+          echo "PYO3_PYTHON=python" >> $GITHUB_ENV
+          PY_PREFIX=$(python -c "import sys; print(sys.prefix)")
+          echo "LIB=${PY_PREFIX}/libs" >> $GITHUB_ENV
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
