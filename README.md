@@ -215,6 +215,50 @@ docker run --rm -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest 
 docker run --rm -it -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:latest-ubuntu bash
 ```
 
+## Kubernetes (Helm)
+
+A Helm chart for a **single-pod deployment** is available at `charts/logmedic`.
+
+```bash
+# install with default values
+helm install logmedic ./charts/logmedic
+
+# or provide custom values (recommended)
+helm install logmedic ./charts/logmedic -f my-values.yaml
+```
+
+By default, the chart uses conservative resources:
+- requests: `25m` CPU / `64Mi` memory
+- limits: `100m` CPU / `256Mi` memory
+
+To provide API tokens, either reference an existing secret:
+
+```yaml
+secrets:
+  name: logmedic-api-keys
+```
+
+or let Helm create one (not recommended for production — see warning below):
+
+```yaml
+secrets:
+  create: true
+  anthropicApiKey: "sk-ant-..."
+  githubToken: "ghp_..."
+```
+
+> **⚠️ Security warning:** Helm stores all release values (including any tokens you pass via
+> `secrets.anthropicApiKey` / `secrets.githubToken`) in an in-cluster Secret and they may also
+> end up in GitOps repositories or CI logs. For production deployments, pre-create the Secret
+> outside of Helm and reference it with `secrets.name` instead of using `secrets.create`.
+
+Then verify health:
+
+```bash
+kubectl port-forward svc/logmedic-logmedic 6969:6969
+curl -fsS http://127.0.0.1:6969/healthz
+```
+
 ## Running
 
 ```bash
