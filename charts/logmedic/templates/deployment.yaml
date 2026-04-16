@@ -5,7 +5,7 @@ metadata:
   labels:
     {{- include "logmedic.labels" . | nindent 4 }}
 spec:
-  replicas: {{ .Values.replicaCount }}
+  replicas: {{ if .Values.activePassive.enabled }}{{ .Values.activePassive.replicas }}{{ else }}{{ .Values.replicaCount }}{{ end }}
   selector:
     matchLabels:
       {{- include "logmedic.selectorLabels" . | nindent 6 }}
@@ -38,12 +38,213 @@ spec:
           {{- end }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.activePassive.enabled }}
+          command:
+            - python3.13
+            - -u
+            - -c
+          args:
+            - |
+              import datetime as dt
+              import json
+              import os
+              import pathlib
+              import ssl
+              import subprocess
+              import sys
+              import time
+              import urllib.error
+              import urllib.request
+
+              API_HOST = os.getenv("KUBERNETES_SERVICE_HOST")
+              API_PORT = os.getenv("KUBERNETES_SERVICE_PORT_HTTPS", "443")
+              SA_DIR = "/var/run/secrets/kubernetes.io/serviceaccount"
+              TOKEN_PATH = f"{SA_DIR}/token"
+              CA_PATH = f"{SA_DIR}/ca.crt"
+              NS_PATH = f"{SA_DIR}/namespace"
+
+              POD_NAME = os.environ["POD_NAME"]
+              POD_NAMESPACE = os.getenv("POD_NAMESPACE")
+              if not POD_NAMESPACE and os.path.exists(NS_PATH):
+                  POD_NAMESPACE = pathlib.Path(NS_PATH).read_text(encoding="utf-8").strip()
+              if not POD_NAMESPACE:
+                  raise SystemExit("POD_NAMESPACE is not set and service account namespace file is missing")
+
+              LEASE_NAME = os.getenv("LOGMEDIC_LEASE_NAME", "logmedic-active")
+              LEASE_DURATION = int(os.getenv("LOGMEDIC_LEASE_DURATION_SECONDS", "30"))
+              RENEW_INTERVAL = int(os.getenv("LOGMEDIC_LEASE_RENEW_INTERVAL_SECONDS", "10"))
+              STANDBY_POLL = int(os.getenv("LOGMEDIC_STANDBY_POLL_SECONDS", "5"))
+              CONFIG_PATH = {{ .Values.logmedic.configPath | quote }}
+              HEARTBEAT_FILE = "/tmp/logmedic-heartbeat"
+              ACTIVE_FILE = "/tmp/logmedic-active"
+
+              if not os.path.exists(TOKEN_PATH):
+                  raise SystemExit("service account token not found; active/passive mode requires service account token mounting")
+              token = pathlib.Path(TOKEN_PATH).read_text(encoding="utf-8").strip()
+
+              if not API_HOST:
+                  raise SystemExit("KUBERNETES_SERVICE_HOST is not set")
+              base_url = f"https://{API_HOST}:{API_PORT}"
+              lease_path = f"/apis/coordination.k8s.io/v1/namespaces/{POD_NAMESPACE}/leases/{LEASE_NAME}"
+              ssl_ctx = ssl.create_default_context(cafile=CA_PATH)
+
+              def now_iso() -> str:
+                  return dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+
+              def parse_time(value: str | None):
+                  if not value:
+                      return None
+                  try:
+                      return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+                  except Exception:
+                      return None
+
+              def kube_request(method: str, path: str, body=None, content_type="application/json"):
+                  data = None
+                  if body is not None:
+                      data = json.dumps(body, separators=(",", ":")).encode("utf-8")
+                  req = urllib.request.Request(
+                      f"{base_url}{path}",
+                      data=data,
+                      method=method,
+                      headers={
+                          "Authorization": f"Bearer {token}",
+                          "Accept": "application/json",
+                          "Content-Type": content_type,
+                      },
+                  )
+                  try:
+                      with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as resp:
+                          raw = resp.read()
+                          return resp.status, json.loads(raw.decode("utf-8")) if raw else {}
+                  except urllib.error.HTTPError as e:
+                      raw = e.read().decode("utf-8") if e.fp else ""
+                      parsed = {}
+                      if raw:
+                          try:
+                              parsed = json.loads(raw)
+                          except Exception:
+                              parsed = {"raw": raw}
+                      return e.code, parsed
+
+              def get_lease():
+                  return kube_request("GET", lease_path)
+
+              def create_lease():
+                  now = now_iso()
+                  body = {
+                      "apiVersion": "coordination.k8s.io/v1",
+                      "kind": "Lease",
+                      "metadata": {"name": LEASE_NAME, "namespace": POD_NAMESPACE},
+                      "spec": {
+                          "holderIdentity": POD_NAME,
+                          "leaseDurationSeconds": LEASE_DURATION,
+                          "acquireTime": now,
+                          "renewTime": now,
+                      },
+                  }
+                  return kube_request(
+                      "POST",
+                      f"/apis/coordination.k8s.io/v1/namespaces/{POD_NAMESPACE}/leases",
+                      body,
+                  )
+
+              def update_lease(existing: dict):
+                  now = now_iso()
+                  existing.setdefault("spec", {})
+                  existing["spec"]["holderIdentity"] = POD_NAME
+                  existing["spec"]["leaseDurationSeconds"] = LEASE_DURATION
+                  existing["spec"]["renewTime"] = now
+                  if not existing["spec"].get("acquireTime"):
+                      existing["spec"]["acquireTime"] = now
+                  return kube_request("PUT", lease_path, existing)
+
+              def should_attempt_takeover(lease: dict) -> bool:
+                  spec = lease.get("spec", {})
+                  holder = spec.get("holderIdentity")
+                  if holder == POD_NAME:
+                      return True
+                  lease_secs = int(spec.get("leaseDurationSeconds", LEASE_DURATION))
+                  renew_time = parse_time(spec.get("renewTime"))
+                  if renew_time is None:
+                      return True
+                  return dt.datetime.now(dt.timezone.utc) >= (renew_time + dt.timedelta(seconds=lease_secs))
+
+              child = None
+              while True:
+                  pathlib.Path(HEARTBEAT_FILE).write_text(now_iso(), encoding="utf-8")
+                  try:
+                      status, lease_obj = get_lease()
+                      if status == 404:
+                          status, lease_obj = create_lease()
+
+                      leader = False
+                      if status in (200, 201):
+                          if should_attempt_takeover(lease_obj):
+                              update_status, updated_lease = update_lease(lease_obj)
+                              if update_status == 200:
+                                  holder = updated_lease.get("spec", {}).get("holderIdentity")
+                                  leader = holder == POD_NAME
+                          else:
+                              holder = lease_obj.get("spec", {}).get("holderIdentity")
+                              leader = holder == POD_NAME
+
+                      if leader:
+                          if child is None or child.poll() is not None:
+                              child = subprocess.Popen(["/logmedic", CONFIG_PATH])
+                          pathlib.Path(ACTIVE_FILE).write_text(POD_NAME, encoding="utf-8")
+                      else:
+                          if os.path.exists(ACTIVE_FILE):
+                              os.remove(ACTIVE_FILE)
+                          if child is not None and child.poll() is None:
+                              child.terminate()
+                              try:
+                                  child.wait(timeout=15)
+                              except Exception:
+                                  child.kill()
+                                  child.wait(timeout=5)
+                          child = None
+
+                      time.sleep(RENEW_INTERVAL if leader else STANDBY_POLL)
+                  except Exception as err:
+                      print(f"leader-election loop error: {err}", file=sys.stderr, flush=True)
+                      if os.path.exists(ACTIVE_FILE):
+                          os.remove(ACTIVE_FILE)
+                      if child is not None and child.poll() is None:
+                          child.terminate()
+                          try:
+                              child.wait(timeout=10)
+                          except Exception:
+                              child.kill()
+                              child.wait(timeout=5)
+                      child = None
+                      time.sleep(STANDBY_POLL)
+          {{- else }}
           args:
             - {{ .Values.logmedic.configPath | quote }}
+          {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
               protocol: TCP
+          {{- if .Values.activePassive.enabled }}
+          livenessProbe:
+            exec:
+              command:
+                - python3.13
+                - -c
+                - import os,time,sys; p="/tmp/logmedic-heartbeat"; sys.exit(0 if os.path.exists(p) and (time.time()-os.path.getmtime(p)) < {{ .Values.activePassive.livenessHeartbeatTimeoutSeconds }} else 1)
+            initialDelaySeconds: 20
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - python3.13
+                - -c
+                - import os,sys; sys.exit(0 if os.path.exists("/tmp/logmedic-active") else 1)
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          {{- else }}
           {{- with .Values.livenessProbe }}
           livenessProbe:
             {{- toYaml . | nindent 12 }}
@@ -51,6 +252,7 @@ spec:
           {{- with .Values.readinessProbe }}
           readinessProbe:
             {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
@@ -74,6 +276,24 @@ spec:
             {{- with .Values.env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
+            {{- if .Values.activePassive.enabled }}
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: LOGMEDIC_LEASE_NAME
+              value: {{ default (printf "%s-active-passive" (include "logmedic.fullname" .)) .Values.activePassive.leaseName | quote }}
+            - name: LOGMEDIC_LEASE_DURATION_SECONDS
+              value: {{ .Values.activePassive.leaseDurationSeconds | quote }}
+            - name: LOGMEDIC_LEASE_RENEW_INTERVAL_SECONDS
+              value: {{ .Values.activePassive.renewIntervalSeconds | quote }}
+            - name: LOGMEDIC_STANDBY_POLL_SECONDS
+              value: {{ .Values.activePassive.standbyPollSeconds | quote }}
+            {{- end }}
           {{- end }}
           volumeMounts:
             - name: config
@@ -93,9 +313,19 @@ spec:
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      {{- with .Values.affinity }}
+      {{- if .Values.affinity }}
       affinity:
         {{- toYaml . | nindent 8 }}
+      {{- else if and .Values.activePassive.enabled .Values.activePassive.preferDifferentNodes }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    {{- include "logmedic.selectorLabels" . | nindent 20 }}
+                topologyKey: kubernetes.io/hostname
       {{- end }}
       {{- with .Values.tolerations }}
       tolerations:

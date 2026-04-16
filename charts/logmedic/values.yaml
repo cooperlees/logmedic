@@ -1,5 +1,15 @@
 replicaCount: 1
 
+activePassive:
+  enabled: false
+  replicas: 2
+  leaseName: ""
+  leaseDurationSeconds: 30
+  renewIntervalSeconds: 10
+  standbyPollSeconds: 5
+  livenessHeartbeatTimeoutSeconds: 120
+  preferDifferentNodes: true
+
 image:
   repository: cooperlees/logmedic
   pullPolicy: IfNotPresent

@@ -338,7 +338,7 @@ docker run --rm -it -v $(pwd)/logmedic.toml:/config.toml cooperlees/logmedic:lat
 
 ## Kubernetes (Helm)
 
-A Helm chart for a **single-pod deployment** is available at `charts/logmedic`.
+A Helm chart is available at `charts/logmedic`.
 
 ```bash
 # install with default values
@@ -351,6 +351,29 @@ helm install logmedic ./charts/logmedic -f my-values.yaml
 By default, the chart uses conservative resources:
 - requests: `25m` CPU / `64Mi` memory
 - limits: `100m` CPU / `256Mi` memory
+
+### High availability mode (active/passive only)
+
+Today, Kubernetes support is intentionally limited to **active/passive**. Horizontal active/active scaling and sharded work distribution are not supported yet.
+
+Enable active/passive with two replicas:
+
+```yaml
+activePassive:
+  enabled: true
+  replicas: 2
+```
+
+What this does:
+- Uses a Kubernetes `Lease` object for leader election.
+- Runs exactly one active leader loop at a time.
+- Keeps one passive standby pod ready to take over if the active pod/node is drained or lost.
+- Prefers spreading the two pods onto different nodes (`kubernetes.io/hostname`) by default.
+
+Current limitations:
+- Runtime processing state is not shared between pods; failover starts from the new leader’s in-memory state.
+- Prometheus metrics are process-local; after failover, counters/histograms continue from the newly active pod’s local metrics state.
+- Active/active and workload sharding are future work.
 
 To provide API tokens, either reference an existing secret:
 
@@ -380,6 +403,8 @@ kubectl port-forward svc/logmedic-logmedic 6969:6969
 curl -fsS http://127.0.0.1:6969/healthz
 ```
 
+In active/passive mode, the service routes to the active pod only (readiness is leader-gated).
+
 ## Running
 
 ```bash
@@ -399,6 +424,8 @@ logmedic runs an HTTP server (default port 6969) with two endpoints:
 
 - **`/healthz`** — Returns `200` if all plugins loaded successfully, `503` otherwise. JSON body shows expected vs loaded counts for detectors and remediators.
 - **`/metrics`** — Prometheus-compatible metrics endpoint. Scrape it with your existing Prometheus instance.
+
+> In Kubernetes active/passive mode, metrics are emitted by the currently active leader pod and are not globally shared across replicas. Use Prometheus recording rules if you need continuity across failover events.
 
 Exposed metrics:
 
