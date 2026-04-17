@@ -115,7 +115,8 @@ pub struct Metrics {
     pub remediation_duration_seconds: HistogramVec,
 
     // Action kind breakdown
-    pub remediation_actions_by_kind: IntCounterVec,
+    pub remediation_actions_proposed_by_kind: IntCounterVec,
+    pub remediation_actions_executed_by_kind: IntCounterVec,
 
     // Anomaly severity breakdown
     pub anomalies_by_level: IntCounterVec,
@@ -204,12 +205,19 @@ impl Metrics {
             &["remediator"],
         )?;
 
-        let remediation_actions_by_kind = IntCounterVec::new(
+        let remediation_actions_proposed_by_kind = IntCounterVec::new(
             Opts::new(
-                "logmedic_remediation_actions_by_kind_total",
-                "Total remediation actions broken down by kind",
+                "logmedic_remediation_actions_proposed_by_kind_total",
+                "Total remediation actions proposed, broken down by kind",
             ),
             &["kind"],
+        )?;
+        let remediation_actions_executed_by_kind = IntCounterVec::new(
+            Opts::new(
+                "logmedic_remediation_actions_executed_by_kind_total",
+                "Total remediation actions executed, broken down by kind and status",
+            ),
+            &["kind", "status"],
         )?;
 
         let anomalies_by_level = IntCounterVec::new(
@@ -238,7 +246,8 @@ impl Metrics {
         registry.register(Box::new(remediations_executed_total.clone()))?;
         registry.register(Box::new(remediation_errors_total.clone()))?;
         registry.register(Box::new(remediation_duration_seconds.clone()))?;
-        registry.register(Box::new(remediation_actions_by_kind.clone()))?;
+        registry.register(Box::new(remediation_actions_proposed_by_kind.clone()))?;
+        registry.register(Box::new(remediation_actions_executed_by_kind.clone()))?;
         registry.register(Box::new(anomalies_by_level.clone()))?;
         registry.register(Box::new(daemon_start_time.clone()))?;
 
@@ -256,7 +265,8 @@ impl Metrics {
             remediations_executed_total,
             remediation_errors_total,
             remediation_duration_seconds,
-            remediation_actions_by_kind,
+            remediation_actions_proposed_by_kind,
+            remediation_actions_executed_by_kind,
             anomalies_by_level,
             daemon_start_time,
         })
@@ -342,5 +352,34 @@ pub async fn serve_http(port: u16, registry: Registry, health: Health) -> anyhow
                 tracing::warn!(error = %e, "http connection error");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Metrics;
+    use std::collections::HashSet;
+
+    #[test]
+    fn registers_split_remediation_action_kind_metrics() {
+        let metrics = Metrics::new().expect("metrics should initialize");
+        metrics
+            .remediation_actions_proposed_by_kind
+            .with_label_values(&["ssh_command"])
+            .inc();
+        metrics
+            .remediation_actions_executed_by_kind
+            .with_label_values(&["ssh_command", "failed"])
+            .inc();
+        let metric_names: HashSet<_> = metrics
+            .registry
+            .gather()
+            .into_iter()
+            .map(|mf| mf.get_name().to_string())
+            .collect();
+
+        assert!(metric_names.contains("logmedic_remediation_actions_proposed_by_kind_total"));
+        assert!(metric_names.contains("logmedic_remediation_actions_executed_by_kind_total"));
+        assert!(!metric_names.contains("logmedic_remediation_actions_by_kind_total"));
     }
 }

@@ -8,7 +8,15 @@ mod remediate;
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 
-use crate::remediate::ActionKind;
+use crate::remediate::{ActionKind, ActionStatus};
+
+fn action_kind_label(kind: &ActionKind) -> &'static str {
+    match kind {
+        ActionKind::PullRequest { .. } => "pull_request",
+        ActionKind::SshCommand { .. } => "ssh_command",
+        ActionKind::Report { .. } => "report",
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -170,12 +178,8 @@ async fn main() -> anyhow::Result<()> {
 
                         // Track action kinds
                         for action in &actions {
-                            let kind_label = match &action.kind {
-                                ActionKind::PullRequest { .. } => "pull_request",
-                                ActionKind::SshCommand { .. } => "ssh_command",
-                                ActionKind::Report { .. } => "report",
-                            };
-                            m.remediation_actions_by_kind
+                            let kind_label = action_kind_label(&action.kind);
+                            m.remediation_actions_proposed_by_kind
                                 .with_label_values(&[kind_label])
                                 .inc();
                         }
@@ -193,21 +197,38 @@ async fn main() -> anyhow::Result<()> {
                                 "executing remediation"
                             );
                             let exec_start = Instant::now();
+                            let kind_label = action_kind_label(&action.kind);
                             match remediator.execute(action).await {
                                 Ok(status) => {
                                     let status_label = match &status {
-                                        remediate::ActionStatus::Applied => "applied",
-                                        remediate::ActionStatus::Proposed => "proposed",
-                                        remediate::ActionStatus::Approved => "approved",
-                                        remediate::ActionStatus::Failed { .. } => "failed",
+                                        ActionStatus::Applied => "applied",
+                                        ActionStatus::Proposed => "proposed",
+                                        ActionStatus::Approved => "approved",
+                                        ActionStatus::Failed { .. } => "failed",
                                     };
+                                    let successful = matches!(status, ActionStatus::Applied);
                                     info!(
                                         remediator = remediator.name(),
+                                        kind = kind_label,
                                         status = status_label,
+                                        successful,
                                         "remediation executed"
                                     );
+                                    if let ActionStatus::Failed { reason } = &status {
+                                        warn!(
+                                            remediator = remediator.name(),
+                                            kind = kind_label,
+                                            status = status_label,
+                                            successful,
+                                            reason = %reason,
+                                            "remediation returned failed status"
+                                        );
+                                    }
                                     m.remediations_executed_total
                                         .with_label_values(&[remediator.name(), status_label])
+                                        .inc();
+                                    m.remediation_actions_executed_by_kind
+                                        .with_label_values(&[kind_label, status_label])
                                         .inc();
                                 }
                                 Err(e) => {

@@ -417,7 +417,8 @@ Exposed metrics:
 | `logmedic_remediations_executed_total` | counter | Actions executed (labels: `remediator`, `status`) |
 | `logmedic_remediation_errors_total` | counter | Execution errors per remediator |
 | `logmedic_remediation_duration_seconds` | histogram | Execution duration per remediator |
-| `logmedic_remediation_actions_by_kind_total` | counter | Actions by kind (`pull_request`, `ssh_command`, `report`) |
+| `logmedic_remediation_actions_proposed_by_kind_total` | counter | Proposed actions by kind (`pull_request`, `ssh_command`, `report`) |
+| `logmedic_remediation_actions_executed_by_kind_total` | counter | Executed actions by kind and execution status (labels: `kind`, `status`) |
 | `logmedic_daemon_start_time_seconds` | gauge | Unix timestamp of daemon start |
 
 Example Prometheus scrape config:
