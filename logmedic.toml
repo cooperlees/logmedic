@@ -15,6 +15,7 @@ loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
 # query = '{app="myservice"} |= "error"'
+# limit = 10000  # max log lines to fetch per query
 # deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies from these Loki stream labels
 
 # --- Remediator plugins ---

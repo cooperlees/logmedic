@@ -9,17 +9,32 @@ Settings (passed via TOML config):
     org_id: str          - Optional Loki tenant/org ID header
     query: str           - LogQL query override (default: error/warn filter)
     extra_labels: str    - Additional label matchers (e.g. '{namespace="prod"}')
+    limit: int           - Max log lines to fetch per query (default: 10000)
     deny_labels: list    - Skip anomalies whose stream labels match any "key=value" entry
                            (e.g. ["app=homeassistant", "namespace=legacy"])
 """
 
 import json
 import logging
+import re
+import time
 from collections import Counter
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 log = logging.getLogger("logmedic.loki_detector")
+
+# Loki `since` accepts Go duration syntax; we support the units likely in a config file.
+_LOOKBACK_RE = re.compile(r"^\s*(\d+)\s*([smhd])\s*$")
+_LOOKBACK_UNIT_SECS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _parse_lookback_seconds(lookback: str) -> int | None:
+    m = _LOOKBACK_RE.match(lookback)
+    if not m:
+        return None
+    return int(m.group(1)) * _LOOKBACK_UNIT_SECS[m.group(2)]
 
 
 class DetectorPlugin:
@@ -29,6 +44,7 @@ class DetectorPlugin:
         self.org_id = raw.get("org_id", "")
         self.extra_labels = raw.get("extra_labels", "")
         self.custom_query = raw.get("query", "")
+        self.limit = int(raw.get("limit", 10000))
         self.deny_labels: set[tuple[str, str]] = set()
         for entry in raw.get("deny_labels", []):
             if "=" in entry:
@@ -39,11 +55,12 @@ class DetectorPlugin:
                     "deny_labels entry %r has no '=' separator, skipping", entry
                 )
         log.debug(
-            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s deny_labels=%s",
+            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d deny_labels=%s",
             self.loki_url,
             self.org_id or "(none)",
             self.extra_labels or "(none)",
             self.custom_query or "(default)",
+            self.limit,
             self.deny_labels or "(none)",
         )
 
@@ -64,7 +81,7 @@ class DetectorPlugin:
             {
                 "query": query,
                 "since": lookback,
-                "limit": "5000",
+                "limit": str(self.limit),
                 "direction": "backward",
             }
         )
@@ -89,9 +106,52 @@ class DetectorPlugin:
             log.error("query failed: %s", e)
             return []
 
+        self._log_oldest_line(data, lookback)
         anomalies = self._analyze(data, threshold)
         log.debug("analysis complete: %d anomalies above threshold", len(anomalies))
         return anomalies
+
+    def _log_oldest_line(self, data: dict, lookback: str) -> None:
+        """Debug-log the oldest log line; warn if the lookback window was truncated."""
+        oldest_ns: int | None = None
+        oldest_line = ""
+        total_lines = 0
+        for stream in data.get("data", {}).get("result", []):
+            for ts, line in stream.get("values", []):
+                total_lines += 1
+                try:
+                    ns = int(ts)
+                except (TypeError, ValueError):
+                    continue
+                if oldest_ns is None or ns < oldest_ns:
+                    oldest_ns = ns
+                    oldest_line = line
+        if oldest_ns is None:
+            log.debug("oldest log line: (no lines returned)")
+            return
+        iso = datetime.fromtimestamp(oldest_ns / 1e9, tz=timezone.utc).isoformat()
+        log.debug(
+            "oldest log line: ts=%s (%d ns) line=%.200s", iso, oldest_ns, oldest_line
+        )
+
+        # If Loki returned exactly `limit` lines AND the oldest is newer than the
+        # lookback window start, the limit clipped our window — warn the operator.
+        lookback_secs = _parse_lookback_seconds(lookback)
+        if lookback_secs is None:
+            log.debug("could not parse lookback %r; skipping coverage check", lookback)
+            return
+        expected_start_ns = time.time_ns() - lookback_secs * 1_000_000_000
+        if total_lines >= self.limit and oldest_ns > expected_start_ns:
+            shortfall_secs = (oldest_ns - expected_start_ns) / 1e9
+            log.warning(
+                "loki returned %d lines (hit limit=%d) but the oldest line is %.1fs "
+                "newer than the requested lookback=%s start — the window was "
+                "truncated. Consider increasing the `limit` setting in logmedic.toml.",
+                total_lines,
+                self.limit,
+                shortfall_secs,
+                lookback,
+            )
 
     def _default_query(self) -> str:
         # Loki requires at least one label matcher; use a match-all if none configured

@@ -1,6 +1,7 @@
 """Tests for the Loki detector plugin."""
 
 import json
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -329,6 +330,121 @@ class TestDenyLabels(unittest.TestCase):
         anomalies = plugin.detect("1h", 5)
 
         self.assertEqual(len(anomalies), 2)
+
+
+class TestLogOldestLine(unittest.TestCase):
+    """_log_oldest_line finds the minimum-timestamp line across all streams."""
+
+    def test_finds_oldest_across_streams(self):
+        # 5 entries across 2 streams, out of order; the global min is ts=1000...
+        data = {
+            "data": {
+                "result": [
+                    {
+                        "stream": {"app": "a"},
+                        "values": [
+                            ["3000000000000000000", "third line"],
+                            ["5000000000000000000", "fifth line"],
+                        ],
+                    },
+                    {
+                        "stream": {"app": "b"},
+                        "values": [
+                            ["4000000000000000000", "fourth line"],
+                            ["1000000000000000000", "the oldest line"],
+                            ["2000000000000000000", "second line"],
+                        ],
+                    },
+                ],
+            },
+        }
+
+        plugin = DetectorPlugin(_make_settings())
+        with self.assertLogs("logmedic.loki_detector", level="DEBUG") as cm:
+            plugin._log_oldest_line(data, "1h")
+
+        joined = "\n".join(cm.output)
+        self.assertIn("the oldest line", joined)
+        self.assertIn("1000000000000000000 ns", joined)
+        # 1e18 ns = 2001-09-09T01:46:40+00:00
+        self.assertIn("2001-09-09T01:46:40+00:00", joined)
+
+    def test_warns_when_limit_hit_and_window_truncated(self):
+        """limit=5 returned and oldest is only 30s ago under a 1h lookback → warn."""
+        now_ns = time.time_ns()
+        thirty_secs_ago = now_ns - 30 * 1_000_000_000
+        data = {
+            "data": {
+                "result": [
+                    {
+                        "stream": {"app": "noisy"},
+                        "values": [
+                            [str(thirty_secs_ago + i), f"line {i}"] for i in range(5)
+                        ],
+                    },
+                ],
+            },
+        }
+
+        plugin = DetectorPlugin(_make_settings(limit=5))
+        with self.assertLogs("logmedic.loki_detector", level="DEBUG") as cm:
+            plugin._log_oldest_line(data, "1h")
+
+        joined = "\n".join(cm.output)
+        self.assertIn("WARNING", joined)
+        self.assertIn("hit limit=5", joined)
+        self.assertIn("lookback=1h", joined)
+        self.assertIn("increasing the `limit`", joined)
+
+    def test_no_warning_when_below_limit(self):
+        """Fewer lines than the limit → window wasn't clipped, no warning."""
+        now_ns = time.time_ns()
+        thirty_secs_ago = now_ns - 30 * 1_000_000_000
+        data = {
+            "data": {
+                "result": [
+                    {
+                        "stream": {"app": "quiet"},
+                        "values": [
+                            [str(thirty_secs_ago + i), f"line {i}"] for i in range(3)
+                        ],
+                    },
+                ],
+            },
+        }
+
+        plugin = DetectorPlugin(_make_settings(limit=10000))
+        with self.assertLogs("logmedic.loki_detector", level="DEBUG") as cm:
+            plugin._log_oldest_line(data, "1h")
+
+        joined = "\n".join(cm.output)
+        self.assertNotIn("WARNING", joined)
+
+    def test_no_warning_when_oldest_reaches_lookback(self):
+        """At-limit but oldest line covers the lookback → no warning."""
+        now_ns = time.time_ns()
+        one_hour_ns = 3600 * 1_000_000_000
+        # Place 5 lines spanning from ~1h ago to ~50min ago — full window covered.
+        data = {
+            "data": {
+                "result": [
+                    {
+                        "stream": {"app": "ok"},
+                        "values": [
+                            [str(now_ns - one_hour_ns + i * 10_000_000_000), f"l{i}"]
+                            for i in range(5)
+                        ],
+                    },
+                ],
+            },
+        }
+
+        plugin = DetectorPlugin(_make_settings(limit=5))
+        with self.assertLogs("logmedic.loki_detector", level="DEBUG") as cm:
+            plugin._log_oldest_line(data, "1h")
+
+        joined = "\n".join(cm.output)
+        self.assertNotIn("WARNING", joined)
 
 
 if __name__ == "__main__":
