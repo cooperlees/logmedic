@@ -17,6 +17,8 @@ loki_url = "http://localhost:3100"
 # query = '{app="myservice"} |= "error"'
 # limit = 10000  # max log lines to fetch per query
 # deny_labels = ["app=homeassistant", "namespace=legacy"]  # skip anomalies from these Loki stream labels
+# deny_labels = ["container_name=home-assistant", ["hostname=home2.cooperlees.com", "unit=systemd-networkd.service"]]
+# deny_label_sets = [["hostname=home2.cooperlees.com", "unit=systemd-networkd.service"]]  # optional explicit AND rules
 
 # --- Remediator plugins ---
 

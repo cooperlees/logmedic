@@ -10,8 +10,10 @@ Settings (passed via TOML config):
     query: str           - LogQL query override (default: error/warn filter)
     extra_labels: str    - Additional label matchers (e.g. '{namespace="prod"}')
     limit: int           - Max log lines to fetch per query (default: 10000)
-    deny_labels: list    - Skip anomalies whose stream labels match any "key=value" entry
-                           (e.g. ["app=homeassistant", "namespace=legacy"])
+    deny_labels: list    - Skip anomalies whose stream labels match deny rules:
+                           - "key=value" string entries use OR semantics
+                           - nested ["k=v", "x=y"] entries use AND semantics
+    deny_label_sets: list - Optional explicit AND-only rules, each as ["key=value", ...]
 """
 
 import json
@@ -38,6 +40,37 @@ def _parse_lookback_seconds(lookback: str) -> int | None:
 
 
 class DetectorPlugin:
+    @staticmethod
+    def _parse_label_pair(entry: str) -> tuple[str, str] | None:
+        if "=" not in entry:
+            return None
+        key, value = entry.split("=", 1)
+        if not key or not value:
+            return None
+        return key, value
+
+    @classmethod
+    def _parse_label_set(cls, entry: list) -> frozenset[tuple[str, str]] | None:
+        label_set = set()
+        for set_entry in entry:
+            if not isinstance(set_entry, str):
+                return None
+            label_pair = cls._parse_label_pair(set_entry)
+            if label_pair is None:
+                return None
+            label_set.add(label_pair)
+        if not label_set:
+            return None
+        return frozenset(label_set)
+
+    def _matches_any_deny_label_set(self, stream_labels: dict) -> bool:
+        if not self.deny_label_sets:
+            return False
+        return any(
+            all(stream_labels.get(k) == v for k, v in label_set)
+            for label_set in self.deny_label_sets
+        )
+
     def __init__(self, settings: dict):
         raw = json.loads(settings.get("settings_json", "{}"))
         self.loki_url = raw.get("loki_url", "http://localhost:3100")
@@ -46,22 +79,50 @@ class DetectorPlugin:
         self.custom_query = raw.get("query", "")
         self.limit = int(raw.get("limit", 10000))
         self.deny_labels: set[tuple[str, str]] = set()
+        self.deny_label_sets: list[frozenset[tuple[str, str]]] = []
         for entry in raw.get("deny_labels", []):
-            if "=" in entry:
-                k, v = entry.split("=", 1)
-                self.deny_labels.add((k, v))
+            if isinstance(entry, str):
+                label_pair = self._parse_label_pair(entry)
+                if label_pair is None:
+                    log.warning(
+                        "deny_labels entry %r is malformed, expected non-empty 'key=value'",
+                        entry,
+                    )
+                else:
+                    self.deny_labels.add(label_pair)
+            elif isinstance(entry, list):
+                label_set = self._parse_label_set(entry)
+                if label_set is None:
+                    log.warning(
+                        "deny_labels compound entry %r is malformed, skipping", entry
+                    )
+                else:
+                    self.deny_label_sets.append(label_set)
             else:
                 log.warning(
-                    "deny_labels entry %r has no '=' separator, skipping", entry
+                    "deny_labels entry %r is not a string or list, skipping", entry
                 )
+        for entry in raw.get("deny_label_sets", []):
+            if not isinstance(entry, list):
+                log.warning("deny_label_sets entry %r is not a list, skipping", entry)
+                continue
+            label_set = self._parse_label_set(entry)
+            if label_set is None:
+                log.warning("deny_label_sets entry %r is malformed, skipping", entry)
+            else:
+                self.deny_label_sets.append(label_set)
         log.debug(
-            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d deny_labels=%s",
+            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d",
             self.loki_url,
             self.org_id or "(none)",
             self.extra_labels or "(none)",
             self.custom_query or "(default)",
             self.limit,
+        )
+        log.debug(
+            "initialized deny rules: deny_labels=%s deny_label_sets=%s",
             self.deny_labels or "(none)",
+            self.deny_label_sets or "(none)",
         )
 
     def name(self) -> str:
@@ -176,6 +237,11 @@ class DetectorPlugin:
                 stream_labels.items()
             ):
                 log.info("deny_labels suppressed stream: labels=%s", stream_labels)
+                skipped_streams += 1
+                continue
+            # Skip streams that satisfy any AND deny label set
+            if self._matches_any_deny_label_set(stream_labels):
+                log.info("deny_label_sets suppressed stream: labels=%s", stream_labels)
                 skipped_streams += 1
                 continue
 
