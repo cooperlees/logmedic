@@ -256,7 +256,7 @@ class TestDenyLabels(unittest.TestCase):
 
     @staticmethod
     def _label_set(**labels):
-        """Return a deterministic frozenset representation for deny label set checks."""
+        """Build expected frozenset label sets matching DetectorPlugin's internal format."""
         return frozenset(labels.items())
 
     def test_deny_labels_init_empty_by_default(self):

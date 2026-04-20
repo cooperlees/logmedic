@@ -64,6 +64,8 @@ class DetectorPlugin:
         return frozenset(label_set)
 
     def _matches_any_deny_label_set(self, stream_labels: dict) -> bool:
+        if not self.deny_label_sets:
+            return False
         return any(
             all(stream_labels.get(k) == v for k, v in label_set)
             for label_set in self.deny_label_sets
@@ -110,12 +112,15 @@ class DetectorPlugin:
             else:
                 self.deny_label_sets.append(label_set)
         log.debug(
-            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d deny_labels=%s deny_label_sets=%s",
+            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d",
             self.loki_url,
             self.org_id or "(none)",
             self.extra_labels or "(none)",
             self.custom_query or "(default)",
             self.limit,
+        )
+        log.debug(
+            "initialized deny rules: deny_labels=%s deny_label_sets=%s",
             self.deny_labels or "(none)",
             self.deny_label_sets or "(none)",
         )
@@ -235,7 +240,7 @@ class DetectorPlugin:
                 skipped_streams += 1
                 continue
             # Skip streams that satisfy any AND deny label set
-            if self.deny_label_sets and self._matches_any_deny_label_set(stream_labels):
+            if self._matches_any_deny_label_set(stream_labels):
                 log.info("deny_label_sets suppressed stream: labels=%s", stream_labels)
                 skipped_streams += 1
                 continue
