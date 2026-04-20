@@ -257,6 +257,7 @@ class TestDenyLabels(unittest.TestCase):
     def test_deny_labels_init_empty_by_default(self):
         plugin = DetectorPlugin(_make_settings())
         self.assertEqual(plugin.deny_labels, set())
+        self.assertEqual(plugin.deny_label_sets, [])
 
     def test_deny_labels_parsed(self):
         plugin = DetectorPlugin(
@@ -268,6 +269,52 @@ class TestDenyLabels(unittest.TestCase):
     def test_deny_labels_malformed_entry_skipped(self):
         plugin = DetectorPlugin(_make_settings(deny_labels=["noequalssign"]))
         self.assertEqual(plugin.deny_labels, set())
+
+    def test_deny_labels_compound_entry_parsed(self):
+        plugin = DetectorPlugin(
+            _make_settings(
+                deny_labels=[
+                    "app=homeassistant",
+                    ["hostname=home2.cooperlees.com", "unit=systemd-networkd.service"],
+                ]
+            )
+        )
+        self.assertIn(("app", "homeassistant"), plugin.deny_labels)
+        self.assertIn(
+            frozenset(
+                {
+                    ("hostname", "home2.cooperlees.com"),
+                    ("unit", "systemd-networkd.service"),
+                }
+            ),
+            plugin.deny_label_sets,
+        )
+
+    def test_deny_label_sets_parsed(self):
+        plugin = DetectorPlugin(
+            _make_settings(
+                deny_label_sets=[
+                    ["hostname=home2.cooperlees.com", "unit=systemd-networkd.service"]
+                ]
+            )
+        )
+        self.assertIn(
+            frozenset(
+                {
+                    ("hostname", "home2.cooperlees.com"),
+                    ("unit", "systemd-networkd.service"),
+                }
+            ),
+            plugin.deny_label_sets,
+        )
+
+    def test_deny_labels_malformed_compound_entry_skipped(self):
+        plugin = DetectorPlugin(
+            _make_settings(
+                deny_labels=[["hostname=home2.cooperlees.com", "broken-entry"]]
+            )
+        )
+        self.assertEqual(plugin.deny_label_sets, [])
 
     @patch("loki_detector.urlopen")
     def test_matching_anomaly_is_suppressed(self, mock_urlopen):
@@ -330,6 +377,41 @@ class TestDenyLabels(unittest.TestCase):
         anomalies = plugin.detect("1h", 5)
 
         self.assertEqual(len(anomalies), 2)
+
+    @patch("loki_detector.urlopen")
+    def test_compound_deny_entry_requires_all_labels(self, mock_urlopen):
+        resp = MagicMock()
+        resp.read.return_value = _loki_response(
+            [
+                (
+                    {
+                        "hostname": "home2.cooperlees.com",
+                        "unit": "systemd-networkd.service",
+                    },
+                    ["ERROR: noisy debug line"] * 20,
+                ),
+                (
+                    {"hostname": "home2.cooperlees.com", "unit": "nginx.service"},
+                    ["ERROR: nginx failed"] * 15,
+                ),
+            ]
+        )
+        resp.status = 200
+        resp.__enter__ = lambda s: s
+        resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = resp
+
+        plugin = DetectorPlugin(
+            _make_settings(
+                deny_labels=[
+                    ["hostname=home2.cooperlees.com", "unit=systemd-networkd.service"]
+                ]
+            )
+        )
+        anomalies = plugin.detect("1h", 5)
+
+        self.assertEqual(len(anomalies), 1)
+        self.assertEqual(anomalies[0]["labels"]["unit"], "nginx.service")
 
 
 class TestLogOldestLine(unittest.TestCase):

@@ -10,8 +10,10 @@ Settings (passed via TOML config):
     query: str           - LogQL query override (default: error/warn filter)
     extra_labels: str    - Additional label matchers (e.g. '{namespace="prod"}')
     limit: int           - Max log lines to fetch per query (default: 10000)
-    deny_labels: list    - Skip anomalies whose stream labels match any "key=value" entry
-                           (e.g. ["app=homeassistant", "namespace=legacy"])
+    deny_labels: list    - Skip anomalies whose stream labels match deny rules:
+                           - "key=value" string entries use OR semantics
+                           - nested ["k=v", "x=y"] entries use AND semantics
+    deny_label_sets: list - Optional explicit AND-only rules, each as ["key=value", ...]
 """
 
 import json
@@ -46,22 +48,62 @@ class DetectorPlugin:
         self.custom_query = raw.get("query", "")
         self.limit = int(raw.get("limit", 10000))
         self.deny_labels: set[tuple[str, str]] = set()
+        self.deny_label_sets: list[frozenset[tuple[str, str]]] = []
         for entry in raw.get("deny_labels", []):
-            if "=" in entry:
-                k, v = entry.split("=", 1)
-                self.deny_labels.add((k, v))
+            if isinstance(entry, str):
+                if "=" in entry:
+                    k, v = entry.split("=", 1)
+                    self.deny_labels.add((k, v))
+                else:
+                    log.warning(
+                        "deny_labels entry %r has no '=' separator, skipping", entry
+                    )
+            elif isinstance(entry, list):
+                label_set = set()
+                malformed = False
+                for set_entry in entry:
+                    if isinstance(set_entry, str) and "=" in set_entry:
+                        k, v = set_entry.split("=", 1)
+                        label_set.add((k, v))
+                    else:
+                        malformed = True
+                        break
+                if malformed or not label_set:
+                    log.warning(
+                        "deny_labels compound entry %r is malformed, skipping", entry
+                    )
+                else:
+                    self.deny_label_sets.append(frozenset(label_set))
             else:
                 log.warning(
-                    "deny_labels entry %r has no '=' separator, skipping", entry
+                    "deny_labels entry %r is not a string or list, skipping", entry
                 )
+        for entry in raw.get("deny_label_sets", []):
+            if not isinstance(entry, list):
+                log.warning("deny_label_sets entry %r is not a list, skipping", entry)
+                continue
+            label_set = set()
+            malformed = False
+            for set_entry in entry:
+                if isinstance(set_entry, str) and "=" in set_entry:
+                    k, v = set_entry.split("=", 1)
+                    label_set.add((k, v))
+                else:
+                    malformed = True
+                    break
+            if malformed or not label_set:
+                log.warning("deny_label_sets entry %r is malformed, skipping", entry)
+            else:
+                self.deny_label_sets.append(frozenset(label_set))
         log.debug(
-            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d deny_labels=%s",
+            "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d deny_labels=%s deny_label_sets=%s",
             self.loki_url,
             self.org_id or "(none)",
             self.extra_labels or "(none)",
             self.custom_query or "(default)",
             self.limit,
             self.deny_labels or "(none)",
+            self.deny_label_sets or "(none)",
         )
 
     def name(self) -> str:
@@ -176,6 +218,14 @@ class DetectorPlugin:
                 stream_labels.items()
             ):
                 log.info("deny_labels suppressed stream: labels=%s", stream_labels)
+                skipped_streams += 1
+                continue
+            # Skip streams that satisfy any AND deny label set
+            if self.deny_label_sets and any(
+                all(stream_labels.get(k) == v for k, v in label_set)
+                for label_set in self.deny_label_sets
+            ):
+                log.info("deny_label_sets suppressed stream: labels=%s", stream_labels)
                 skipped_streams += 1
                 continue
 
