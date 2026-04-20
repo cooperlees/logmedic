@@ -256,6 +256,7 @@ class TestDenyLabels(unittest.TestCase):
 
     @staticmethod
     def _label_set(**labels):
+        """Return a deterministic frozenset representation for deny label set checks."""
         return frozenset(labels.items())
 
     def test_deny_labels_init_empty_by_default(self):
@@ -272,6 +273,10 @@ class TestDenyLabels(unittest.TestCase):
 
     def test_deny_labels_malformed_entry_skipped(self):
         plugin = DetectorPlugin(_make_settings(deny_labels=["noequalssign"]))
+        self.assertEqual(plugin.deny_labels, set())
+
+    def test_deny_labels_empty_key_or_value_skipped(self):
+        plugin = DetectorPlugin(_make_settings(deny_labels=["=value", "key="]))
         self.assertEqual(plugin.deny_labels, set())
 
     def test_deny_labels_compound_entry_parsed(self):

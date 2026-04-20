@@ -44,7 +44,10 @@ class DetectorPlugin:
     def _parse_label_pair(entry: str) -> tuple[str, str] | None:
         if "=" not in entry:
             return None
-        return tuple(entry.split("=", 1))
+        key, value = entry.split("=", 1)
+        if not key or not value:
+            return None
+        return key, value
 
     @classmethod
     def _parse_label_set(cls, entry: list) -> frozenset[tuple[str, str]] | None:
@@ -60,6 +63,12 @@ class DetectorPlugin:
             return None
         return frozenset(label_set)
 
+    def _matches_any_deny_label_set(self, stream_labels: dict) -> bool:
+        return any(
+            all(stream_labels.get(k) == v for k, v in label_set)
+            for label_set in self.deny_label_sets
+        )
+
     def __init__(self, settings: dict):
         raw = json.loads(settings.get("settings_json", "{}"))
         self.loki_url = raw.get("loki_url", "http://localhost:3100")
@@ -74,7 +83,8 @@ class DetectorPlugin:
                 label_pair = self._parse_label_pair(entry)
                 if label_pair is None:
                     log.warning(
-                        "deny_labels entry %r has no '=' separator, skipping", entry
+                        "deny_labels entry %r is malformed, expected non-empty 'key=value'",
+                        entry,
                     )
                 else:
                     self.deny_labels.add(label_pair)
@@ -225,10 +235,7 @@ class DetectorPlugin:
                 skipped_streams += 1
                 continue
             # Skip streams that satisfy any AND deny label set
-            if self.deny_label_sets and any(
-                all(stream_labels.get(k) == v for k, v in label_set)
-                for label_set in self.deny_label_sets
-            ):
+            if self.deny_label_sets and self._matches_any_deny_label_set(stream_labels):
                 log.info("deny_label_sets suppressed stream: labels=%s", stream_labels)
                 skipped_streams += 1
                 continue
