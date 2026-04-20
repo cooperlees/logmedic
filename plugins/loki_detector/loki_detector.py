@@ -40,6 +40,26 @@ def _parse_lookback_seconds(lookback: str) -> int | None:
 
 
 class DetectorPlugin:
+    @staticmethod
+    def _parse_label_pair(entry: str) -> tuple[str, str] | None:
+        if "=" not in entry:
+            return None
+        return tuple(entry.split("=", 1))
+
+    @classmethod
+    def _parse_label_set(cls, entry: list) -> frozenset[tuple[str, str]] | None:
+        label_set = set()
+        for set_entry in entry:
+            if not isinstance(set_entry, str):
+                return None
+            label_pair = cls._parse_label_pair(set_entry)
+            if label_pair is None:
+                return None
+            label_set.add(label_pair)
+        if not label_set:
+            return None
+        return frozenset(label_set)
+
     def __init__(self, settings: dict):
         raw = json.loads(settings.get("settings_json", "{}"))
         self.loki_url = raw.get("loki_url", "http://localhost:3100")
@@ -51,29 +71,21 @@ class DetectorPlugin:
         self.deny_label_sets: list[frozenset[tuple[str, str]]] = []
         for entry in raw.get("deny_labels", []):
             if isinstance(entry, str):
-                if "=" in entry:
-                    k, v = entry.split("=", 1)
-                    self.deny_labels.add((k, v))
-                else:
+                label_pair = self._parse_label_pair(entry)
+                if label_pair is None:
                     log.warning(
                         "deny_labels entry %r has no '=' separator, skipping", entry
                     )
+                else:
+                    self.deny_labels.add(label_pair)
             elif isinstance(entry, list):
-                label_set = set()
-                malformed = False
-                for set_entry in entry:
-                    if isinstance(set_entry, str) and "=" in set_entry:
-                        k, v = set_entry.split("=", 1)
-                        label_set.add((k, v))
-                    else:
-                        malformed = True
-                        break
-                if malformed or not label_set:
+                label_set = self._parse_label_set(entry)
+                if label_set is None:
                     log.warning(
                         "deny_labels compound entry %r is malformed, skipping", entry
                     )
                 else:
-                    self.deny_label_sets.append(frozenset(label_set))
+                    self.deny_label_sets.append(label_set)
             else:
                 log.warning(
                     "deny_labels entry %r is not a string or list, skipping", entry
@@ -82,19 +94,11 @@ class DetectorPlugin:
             if not isinstance(entry, list):
                 log.warning("deny_label_sets entry %r is not a list, skipping", entry)
                 continue
-            label_set = set()
-            malformed = False
-            for set_entry in entry:
-                if isinstance(set_entry, str) and "=" in set_entry:
-                    k, v = set_entry.split("=", 1)
-                    label_set.add((k, v))
-                else:
-                    malformed = True
-                    break
-            if malformed or not label_set:
+            label_set = self._parse_label_set(entry)
+            if label_set is None:
                 log.warning("deny_label_sets entry %r is malformed, skipping", entry)
             else:
-                self.deny_label_sets.append(frozenset(label_set))
+                self.deny_label_sets.append(label_set)
         log.debug(
             "initialized: loki_url=%s org_id=%s extra_labels=%s custom_query=%s limit=%d deny_labels=%s deny_label_sets=%s",
             self.loki_url,

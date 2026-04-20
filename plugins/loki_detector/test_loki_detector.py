@@ -254,6 +254,10 @@ class TestNormalize(unittest.TestCase):
 class TestDenyLabels(unittest.TestCase):
     """deny_labels setting suppresses matching anomalies."""
 
+    @staticmethod
+    def _label_set(**labels):
+        return frozenset(labels.items())
+
     def test_deny_labels_init_empty_by_default(self):
         plugin = DetectorPlugin(_make_settings())
         self.assertEqual(plugin.deny_labels, set())
@@ -281,11 +285,8 @@ class TestDenyLabels(unittest.TestCase):
         )
         self.assertIn(("app", "homeassistant"), plugin.deny_labels)
         self.assertIn(
-            frozenset(
-                {
-                    ("hostname", "home2.cooperlees.com"),
-                    ("unit", "systemd-networkd.service"),
-                }
+            self._label_set(
+                hostname="home2.cooperlees.com", unit="systemd-networkd.service"
             ),
             plugin.deny_label_sets,
         )
@@ -299,11 +300,8 @@ class TestDenyLabels(unittest.TestCase):
             )
         )
         self.assertIn(
-            frozenset(
-                {
-                    ("hostname", "home2.cooperlees.com"),
-                    ("unit", "systemd-networkd.service"),
-                }
+            self._label_set(
+                hostname="home2.cooperlees.com", unit="systemd-networkd.service"
             ),
             plugin.deny_label_sets,
         )
