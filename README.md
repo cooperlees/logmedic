@@ -138,6 +138,21 @@ Remediators take anomalies and fix them. They implement the `Remediator` trait w
 - **SSH Commands** — SSHes into the affected host and runs fix commands
 - **Reports** — When automated action isn't appropriate, produces a diagnostic report
 
+**Shared remediator library** (`plugins/common/`) — `remediator_base.py` holds the provider-agnostic propose/execute flow (prompt building, repo-context fetching from a local checkout or the GitHub API, PR creation with dedup, SSH execution, JSON response parsing) subclassed by both remediators, plus the shared `github.py` REST client. The daemon puts `plugins/common/` on `sys.path` next to each plugin's own directory.
+
+**Meta Remediator** (`plugins/meta_remediator/`) — Same action types as the Claude remediator, but powered by Meta's Muse Spark models via the OpenAI-compatible API at `https://api.meta.ai/v1`. Set `model = "latest-contributor"` (or `auto_latest_contributor = true`) to auto-select the newest `*-contributor` model from `GET /v1/models` on every cycle (currently `muse-spark-1.3-contributor`). Supports `local_repo_path` to read repo context from a local checkout (e.g. `~/repos/clc_ansible`) instead of the GitHub API:
+
+```toml
+[remediators.meta]
+kind = "ai"
+path = "plugins/meta_remediator/meta_remediator.py"
+model = "latest-contributor"
+default_repo = "cooperlees/clc_ansible"
+local_repo_path = "/home/cooper/repos/clc_ansible"
+```
+
+Provide the key via `meta_api_key` or the `META_API_KEY` env var.
+
 ### Writing your own plugins
 
 logmedic supports Python plugins and native shared-library plugins.

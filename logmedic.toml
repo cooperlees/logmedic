@@ -32,3 +32,22 @@ model = "claude-opus-4-6"
 # enable_ssh = false
 # ssh_key_path = "~/.ssh/id_ed25519"
 # system_prompt = "Our infra uses Ansible for config management. Services run on k8s in AWS."
+
+# --- Meta Muse Spark remediator (alternative to Claude) ---
+# Uses https://api.meta.ai/v1 with META_API_KEY. "latest-contributor"
+# auto-selects the newest *-contributor model (e.g. muse-spark-1.3-contributor
+# today). local_repo_path reads repo context from a local checkout instead
+# of the GitHub API (no github_token needed for context).
+
+# [remediators.meta]
+# kind = "ai"
+# path = "plugins/meta_remediator/meta_remediator.py"
+# meta_api_key = ""  # or set META_API_KEY env var
+# model = "latest-contributor"
+# reasoning_effort = "low"  # minimal/low/medium/high/xhigh
+# default_repo = "cooperlees/clc_ansible"
+# local_repo_path = "/home/cooper/repos/clc_ansible"
+# auto_execute = false
+# enable_ssh = false
+# ssh_key_path = "~/.ssh/id_ed25519"
+# system_prompt = "Infra managed with Ansible (site.yaml + roles/)."

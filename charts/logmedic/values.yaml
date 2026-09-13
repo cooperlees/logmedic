@@ -57,10 +57,19 @@ logmedic:
     path = "/plugins/claude_remediator/claude_remediator.py"
     model = "claude-sonnet-4-20250514"
 
+    # To use Meta Muse Spark instead of Claude, replace the remediator
+    # above with:
+    # [remediators.meta]
+    # kind = "ai"
+    # path = "/plugins/meta_remediator/meta_remediator.py"
+    # model = "latest-contributor"
+    # reasoning_effort = "low"
+
 secrets:
   create: false
   name: ""
   anthropicApiKey: ""
+  metaApiKey: ""
   githubToken: ""
 
 env: []

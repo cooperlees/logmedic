@@ -17,6 +17,32 @@ fn module_dir(path: &str) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
+/// Directory holding shared plugin libraries (`plugins/common/`).
+/// Plugins import shared code via `from remediator_base import ...`; the
+/// daemon puts this directory on `sys.path` next to the plugin's own dir.
+/// Falls back to `<plugin_dir>/../common` so out-of-tree plugins bundled as
+/// `<root>/<name>/<name>.py` with `<root>/common/` keep working.
+fn common_dir(plugin_path: &str) -> String {
+    // First: <repo>/plugins/common when the plugin lives under plugins/<name>/
+    if let Some(parent) = std::path::Path::new(plugin_path).parent() {
+        if parent.file_name().is_some() {
+            if let Some(grandparent) = parent.parent() {
+                let candidate = grandparent.join("common");
+                if candidate.is_dir() {
+                    return candidate.to_string_lossy().to_string();
+                }
+            }
+        }
+        // Fallback: <plugin_dir>/common for self-contained plugin bundles
+        let sibling = parent.join("common");
+        if sibling.is_dir() {
+            return sibling.to_string_lossy().to_string();
+        }
+    }
+    // Last resort: a common/ dir next to the daemon's working directory
+    "common".to_string()
+}
+
 fn module_stem(path: &str) -> String {
     std::path::Path::new(path)
         .file_stem()
@@ -113,6 +139,13 @@ fn setup_sys_path<'py>(
             detail: e.to_string(),
         })?;
     path.insert(0, module_dir(plugin_path))
+        .map_err(|e| PluginError::PythonSysPathError {
+            name: plugin_name.to_string(),
+            detail: e.to_string(),
+        })?;
+    // Shared libraries (plugins/common/): insert after the plugin dir so the
+    // plugin's own modules take precedence on name clashes.
+    path.append(common_dir(plugin_path))
         .map_err(|e| PluginError::PythonSysPathError {
             name: plugin_name.to_string(),
             detail: e.to_string(),
