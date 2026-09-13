@@ -158,7 +158,7 @@ class RemediatorPlugin(BaseRemediatorPlugin):
                 len(available),
                 fallback,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # any discovery failure -> pinned fallback
             log.warning(
                 "latest -contributor model discovery failed, falling back to %s: %s",
                 fallback,
