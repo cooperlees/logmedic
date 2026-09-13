@@ -47,7 +47,7 @@ python3 -m venv --upgrade-deps /tmp/tl && /tmp/tl/bin/pip install uv
 /tmp/tl/bin/uvx ruff check plugins/
 /tmp/tl/bin/uvx ruff format --check plugins/   # add --no-check to auto-format
 
-# Type check (PYTHONPATH mirrors the daemon's sys.path: plugin dirs + plugins/common)
+# Type check (PYTHONPATH mirrors the daemon's sys.path: plugins/ for logmedic_common)
 PYTHONPATH=$PWD/plugins /tmp/tl/bin/uvx ty check plugins/
 
 # Unit tests (no dependencies needed — stdlib unittest + unittest.mock)

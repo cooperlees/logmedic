@@ -116,16 +116,16 @@ jobs:
         run: PYTHONPATH=${{ github.workspace }}/plugins uvx ty check plugins/
       - name: Test loki_detector
         working-directory: plugins/loki_detector
-        run: python -m unittest test_plugin -v
+        run: python -m unittest test_loki_detector -v
       - name: Test logmedic_common
         working-directory: plugins/logmedic_common
         run: python -m unittest test_github test_remediator_base -v
       - name: Test claude_remediator
         working-directory: plugins/claude_remediator
-        run: python -m unittest test_plugin -v
+        run: python -m unittest test_claude_remediator -v
       - name: Test meta_remediator
         working-directory: plugins/meta_remediator
-        run: python -m unittest test_plugin -v
+        run: python -m unittest test_meta_remediator -v
 
   build-release:
     name: Build Release Binary
