@@ -49,18 +49,27 @@ logmedic:
 
     [plugins.loki]
     kind = "python"
-    path = "/plugins/loki_detector/loki_detector.py"
+    path = "/plugins/loki_detector/plugin.py"
     loki_url = "http://loki:3100"
 
     [remediators.claude]
     kind = "ai"
-    path = "/plugins/claude_remediator/claude_remediator.py"
+    path = "/plugins/claude_remediator/plugin.py"
     model = "claude-sonnet-4-20250514"
+
+    # To use Meta Muse Spark instead of Claude, replace the remediator
+    # above with:
+    # [remediators.meta]
+    # kind = "ai"
+    # path = "/plugins/meta_remediator/plugin.py"
+    # model = "latest-contributor"
+    # reasoning_effort = "low"
 
 secrets:
   create: false
   name: ""
   anthropicApiKey: ""
+  metaApiKey: ""
   githubToken: ""
 
 env: []

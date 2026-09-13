@@ -10,7 +10,7 @@ metrics_port = 6969        # HTTP server: /metrics + /healthz
 
 [plugins.loki]
 kind = "python"
-path = "plugins/loki_detector/loki_detector.py"
+path = "plugins/loki_detector/plugin.py"
 loki_url = "http://localhost:3100"
 # org_id = "tenant-1"
 # extra_labels = '{namespace="production"}'
@@ -24,11 +24,30 @@ loki_url = "http://localhost:3100"
 
 [remediators.claude]
 kind = "ai"
-path = "plugins/claude_remediator/claude_remediator.py"
+path = "plugins/claude_remediator/plugin.py"
 # anthropic_api_key = ""  # or set ANTHROPIC_API_KEY env var
 model = "claude-opus-4-6"
 # default_repo = "myorg/infra-ansible"
-# auto_execute = false
+# auto_execute = false  # false (default): mutating actions stay "proposed", nothing runs
 # enable_ssh = false
 # ssh_key_path = "~/.ssh/id_ed25519"
 # system_prompt = "Our infra uses Ansible for config management. Services run on k8s in AWS."
+
+# --- Meta Muse Spark remediator (alternative to Claude) ---
+# Uses https://api.meta.ai/v1 with META_API_KEY. "latest-contributor"
+# auto-selects the newest *-contributor model (e.g. muse-spark-1.3-contributor
+# today). local_repo_path reads repo context from a local checkout instead
+# of the GitHub API (no github_token needed for context).
+
+# [remediators.meta]
+# kind = "ai"
+# path = "plugins/meta_remediator/plugin.py"
+# meta_api_key = ""  # or set META_API_KEY env var
+# model = "latest-contributor"
+# reasoning_effort = "low"  # minimal/low/medium/high/xhigh
+# default_repo = "cooperlees/clc_ansible"
+# local_repo_path = "/home/cooper/repos/clc_ansible"
+# auto_execute = false  # false (default): mutating actions stay "proposed", nothing runs
+# enable_ssh = false
+# ssh_key_path = "~/.ssh/id_ed25519"
+# system_prompt = "Infra managed with Ansible (site.yaml + roles/)."

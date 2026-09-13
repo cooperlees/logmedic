@@ -47,13 +47,22 @@ python3 -m venv --upgrade-deps /tmp/tl && /tmp/tl/bin/pip install uv
 /tmp/tl/bin/uvx ruff check plugins/
 /tmp/tl/bin/uvx ruff format --check plugins/   # add --no-check to auto-format
 
-# Type check
-/tmp/tl/bin/uvx ty check plugins/
+# Type check (PYTHONPATH mirrors the daemon's sys.path: plugin dirs + plugins/common)
+PYTHONPATH=$PWD/plugins /tmp/tl/bin/uvx ty check plugins/
 
 # Unit tests (no dependencies needed — stdlib unittest + unittest.mock)
 python3 -m unittest discover -s plugins/loki_detector -v
+python3 -m unittest discover -s plugins/logmedic_common -v
 python3 -m unittest discover -s plugins/claude_remediator -v
+python3 -m unittest discover -s plugins/meta_remediator -v
 ```
+
+**Shared plugin library** (`plugins/logmedic_common/`): `remediator_base.py` is the
+base class for the Claude and Meta remediators (shared propose/execute flow;
+subclasses only add API-key loading, model resolution, and the LLM HTTP
+call), plus the shared `github.py` REST client. The daemon appends
+`plugins/` to the embedded interpreter's `sys.path`
+(`shared_package_parent()` in `src/plugin/python.rs`).
 
 ## CI
 

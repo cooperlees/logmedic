@@ -64,6 +64,12 @@ spec:
                   name: {{ $secretName }}
                   key: ANTHROPIC_API_KEY
                   optional: true
+            - name: META_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: META_API_KEY
+                  optional: true
             - name: GITHUB_TOKEN
               valueFrom:
                 secretKeyRef:

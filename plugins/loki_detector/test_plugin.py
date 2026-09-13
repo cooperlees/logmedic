@@ -1,11 +1,18 @@
 """Tests for the Loki detector plugin."""
 
+import os
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_THIS_DIR))  # plugins/ (logmedic_common)
+sys.path.insert(0, _THIS_DIR)  # own dir first: `import <plugin>` finds sibling
+
 import json
 import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from loki_detector import DetectorPlugin
+from loki_detector.plugin import DetectorPlugin
 
 
 def _make_settings(**overrides):
@@ -57,7 +64,7 @@ class TestDetectorInit(unittest.TestCase):
 class TestDetectNoAnomalies(unittest.TestCase):
     """Loki returns data but nothing exceeds the threshold."""
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_empty_result(self, mock_urlopen):
         """Loki returns zero streams → empty list."""
         resp = MagicMock()
@@ -73,7 +80,7 @@ class TestDetectNoAnomalies(unittest.TestCase):
         self.assertEqual(anomalies, [])
         mock_urlopen.assert_called_once()
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_below_threshold(self, mock_urlopen):
         """Lines exist but all counts are below the threshold."""
         lines = [f"error: something happened on host-{i}" for i in range(5)]
@@ -94,7 +101,7 @@ class TestDetectNoAnomalies(unittest.TestCase):
 
         self.assertEqual(anomalies, [])
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_query_failure_returns_empty(self, mock_urlopen):
         """HTTP error → graceful empty return, not an exception."""
         mock_urlopen.side_effect = Exception("connection refused")
@@ -108,7 +115,7 @@ class TestDetectNoAnomalies(unittest.TestCase):
 class TestDetectFindsAnomalies(unittest.TestCase):
     """Loki returns data with patterns exceeding the threshold."""
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_repeated_error_detected(self, mock_urlopen):
         """Same error line repeated → detected as anomaly."""
         repeated = "ERROR: connection refused to database at 10.0.0.5:5432"
@@ -135,7 +142,7 @@ class TestDetectFindsAnomalies(unittest.TestCase):
         self.assertEqual(a["labels"], {"app": "api", "namespace": "prod"})
         self.assertLessEqual(len(a["samples"]), 3)
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_multiple_patterns(self, mock_urlopen):
         """Two distinct error patterns, both above threshold."""
         lines = (
@@ -164,7 +171,7 @@ class TestDetectFindsAnomalies(unittest.TestCase):
         self.assertEqual(anomalies[1]["count"], 10)
         self.assertEqual(anomalies[1]["level"], "warn")
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_uuid_and_number_normalization(self, mock_urlopen):
         """Lines differing only by UUID/number should collapse into one pattern."""
         lines = [
@@ -190,7 +197,7 @@ class TestDetectFindsAnomalies(unittest.TestCase):
         self.assertIn("<UUID>", anomalies[0]["pattern"])
         self.assertIn("<NUM>", anomalies[0]["pattern"])
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_multiple_streams_merged(self, mock_urlopen):
         """Same pattern across multiple Loki streams should be combined."""
         error_line = "error: service unavailable"
@@ -212,7 +219,7 @@ class TestDetectFindsAnomalies(unittest.TestCase):
         self.assertEqual(len(anomalies), 1)
         self.assertEqual(anomalies[0]["count"], 15)
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_org_id_header_sent(self, mock_urlopen):
         """When org_id is set, X-Scope-OrgID header should be included."""
         resp = MagicMock()
@@ -319,7 +326,7 @@ class TestDenyLabels(unittest.TestCase):
         )
         self.assertEqual(plugin.deny_label_sets, [])
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_matching_anomaly_is_suppressed(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = _loki_response(
@@ -339,7 +346,7 @@ class TestDenyLabels(unittest.TestCase):
         self.assertEqual(len(anomalies), 1)
         self.assertEqual(anomalies[0]["labels"]["app"], "prometheus")
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_multiple_deny_entries(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = _loki_response(
@@ -362,7 +369,7 @@ class TestDenyLabels(unittest.TestCase):
         self.assertEqual(len(anomalies), 1)
         self.assertEqual(anomalies[0]["labels"]["app"], "grafana")
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_no_deny_list_passes_all(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = _loki_response(
@@ -381,7 +388,7 @@ class TestDenyLabels(unittest.TestCase):
 
         self.assertEqual(len(anomalies), 2)
 
-    @patch("loki_detector.urlopen")
+    @patch("loki_detector.plugin.urlopen")
     def test_compound_deny_entry_requires_all_labels(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = _loki_response(

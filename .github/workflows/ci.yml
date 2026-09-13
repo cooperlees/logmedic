@@ -111,13 +111,21 @@ jobs:
       - name: Format
         run: uvx ruff format --check plugins/
       - name: Type check
-        run: uvx ty check plugins/
+        # PYTHONPATH mirrors the daemon: plugins/ so the logmedic_common
+        # package resolves the same way it does under sys.path at runtime.
+        run: PYTHONPATH=${{ github.workspace }}/plugins uvx ty check plugins/
       - name: Test loki_detector
         working-directory: plugins/loki_detector
-        run: python -m unittest test_loki_detector -v
+        run: python -m unittest test_plugin -v
+      - name: Test logmedic_common
+        working-directory: plugins/logmedic_common
+        run: python -m unittest test_github test_remediator_base -v
       - name: Test claude_remediator
         working-directory: plugins/claude_remediator
-        run: python -m unittest test_claude_remediator test_github -v
+        run: python -m unittest test_plugin -v
+      - name: Test meta_remediator
+        working-directory: plugins/meta_remediator
+        run: python -m unittest test_plugin -v
 
   build-release:
     name: Build Release Binary

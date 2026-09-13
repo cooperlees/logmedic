@@ -17,6 +17,36 @@ fn module_dir(path: &str) -> String {
         .unwrap_or_else(|| ".".to_string())
 }
 
+/// Directory holding the shared plugin package (`plugins/logmedic_common/`).
+/// Provider plugins import it as `logmedic_common.remediator_base`. The daemon
+/// puts `plugins/` (the package's parent) on `sys.path`; the unique package
+/// name binds deterministically no matter what else is on the path (an
+/// installed PyGithub `github` package or another plugin's `github.py` can no
+/// longer shadow the shared client).
+/// Falls back to `<plugin_dir>/../logmedic_common` so out-of-tree plugins
+/// bundled as `<root>/<name>/<name>.py` with `<root>/logmedic_common/` keep
+/// working.
+fn shared_package_parent(plugin_path: &str) -> String {
+    // First: <repo>/plugins when the plugin lives under plugins/<name>/
+    if let Some(parent) = std::path::Path::new(plugin_path).parent() {
+        if parent.file_name().is_some() {
+            if let Some(grandparent) = parent.parent() {
+                let candidate = grandparent.join("logmedic_common");
+                if candidate.is_dir() {
+                    return grandparent.to_string_lossy().to_string();
+                }
+            }
+        }
+        // Fallback: <plugin_dir>/logmedic_common for self-contained bundles
+        let sibling = parent.join("logmedic_common");
+        if sibling.is_dir() {
+            return parent.to_string_lossy().to_string();
+        }
+    }
+    // Last resort: a logmedic_common/ dir next to the daemon's working directory
+    ".".to_string()
+}
+
 fn module_stem(path: &str) -> String {
     std::path::Path::new(path)
         .file_stem()
@@ -113,6 +143,14 @@ fn setup_sys_path<'py>(
             detail: e.to_string(),
         })?;
     path.insert(0, module_dir(plugin_path))
+        .map_err(|e| PluginError::PythonSysPathError {
+            name: plugin_name.to_string(),
+            detail: e.to_string(),
+        })?;
+    // Shared package parent (plugins/): append after the plugin dir so the
+    // plugin's own modules take precedence; `logmedic_common.*` binds by its
+    // unique package name regardless of path order.
+    path.append(shared_package_parent(plugin_path))
         .map_err(|e| PluginError::PythonSysPathError {
             name: plugin_name.to_string(),
             detail: e.to_string(),
@@ -346,13 +384,30 @@ impl PythonRemediator {
                         detail: e.to_string(),
                     })?;
 
-            let actions: Vec<RemediationAction> =
-                serde_json::from_str(&actions_json).map_err(|e| {
-                    PluginError::PythonJsonParseError {
-                        name: self.plugin_name.clone(),
-                        source: e,
-                    }
+            // Plugins attach the triggering anomalies as `anomaly_context`
+            // (see RemediationAction::context). It is untyped plugin JSON, so
+            // extract it before deserializing the typed action and reattach.
+            let mut raw_actions: Vec<serde_json::Value> = serde_json::from_str(&actions_json)
+                .map_err(|e| PluginError::PythonJsonParseError {
+                    name: self.plugin_name.clone(),
+                    source: e,
                 })?;
+            let mut actions = Vec::with_capacity(raw_actions.len());
+            for raw in raw_actions.iter_mut() {
+                let context: Vec<LogAnomaly> = raw
+                    .get("anomaly_context")
+                    .and_then(|c| serde_json::from_value(c.clone()).ok())
+                    .unwrap_or_default();
+                let mut action: RemediationAction =
+                    serde_json::from_value(raw.clone()).map_err(|e| {
+                        PluginError::PythonJsonParseError {
+                            name: self.plugin_name.clone(),
+                            source: e,
+                        }
+                    })?;
+                action.context = context;
+                actions.push(action);
+            }
             debug!(plugin = %self.plugin_name, actions = actions.len(), "Python propose() returned");
             Ok(actions)
         })
@@ -460,7 +515,27 @@ impl Remediator for PythonRemediator {
     }
 
     async fn execute(&self, action: &RemediationAction) -> Result<ActionStatus, PluginError> {
-        let action_json = serde_json::to_string(action).map_err(|e| {
+        // Re-attach the triggering anomalies under the key Python plugins
+        // read (`anomaly_context`; see RemediationAction::context).
+        let mut value =
+            serde_json::to_value(action).map_err(|e| PluginError::SettingsSerializationFailed {
+                name: self.plugin_name.clone(),
+                source: e,
+            })?;
+        if !action.context.is_empty() {
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "anomaly_context".to_string(),
+                    serde_json::to_value(&action.context).map_err(|e| {
+                        PluginError::SettingsSerializationFailed {
+                            name: self.plugin_name.clone(),
+                            source: e,
+                        }
+                    })?,
+                );
+            }
+        }
+        let action_json = serde_json::to_string(&value).map_err(|e| {
             PluginError::SettingsSerializationFailed {
                 name: self.plugin_name.clone(),
                 source: e,

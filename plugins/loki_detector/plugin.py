@@ -163,7 +163,7 @@ class DetectorPlugin:
                     data.get("data", {}).get("resultType", "?"),
                     len(data.get("data", {}).get("result", [])),
                 )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001  # any query failure -> no anomalies
             log.error("query failed: %s", e)
             return []
 
