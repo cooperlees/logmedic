@@ -1,12 +1,19 @@
 """Tests for the GitHub REST API client module."""
 
+import os
+import sys
+
+sys.path.insert(  # plugins/ (logmedic_common package)
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
+
 import json
 import unittest
 from email.message import Message
 from unittest.mock import MagicMock, call, patch
 from urllib.error import HTTPError
 
-import github
+from logmedic_common import github
 
 
 def _mock_response(data: dict) -> MagicMock:
@@ -20,7 +27,7 @@ def _mock_response(data: dict) -> MagicMock:
 class TestApi(unittest.TestCase):
     """Test the low-level github.api() function."""
 
-    @patch("github.urlopen")
+    @patch("logmedic_common.github.urlopen")
     def test_get_request(self, mock_urlopen):
         mock_urlopen.return_value = _mock_response({"id": 1})
 
@@ -34,7 +41,7 @@ class TestApi(unittest.TestCase):
         self.assertEqual(req.get_header("Accept"), "application/vnd.github+json")
         self.assertEqual(req.get_header("X-github-api-version"), "2022-11-28")
 
-    @patch("github.urlopen")
+    @patch("logmedic_common.github.urlopen")
     def test_post_request_with_body(self, mock_urlopen):
         mock_urlopen.return_value = _mock_response({"sha": "abc"})
 
@@ -48,7 +55,7 @@ class TestApi(unittest.TestCase):
         body = json.loads(req.data)
         self.assertEqual(body["ref"], "refs/heads/fix")
 
-    @patch("github.urlopen")
+    @patch("logmedic_common.github.urlopen")
     def test_http_error_raises_runtime_error(self, mock_urlopen):
         error = HTTPError(
             "https://api.github.com/repos/x",
@@ -69,7 +76,7 @@ class TestApi(unittest.TestCase):
 class TestCreatePullRequest(unittest.TestCase):
     """Test the create_pull_request() high-level function."""
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_full_pr_flow(self, mock_api):
         """Verify the sequence of API calls for creating a PR."""
         mock_api.side_effect = [
@@ -159,7 +166,7 @@ class TestCreatePullRequest(unittest.TestCase):
         self.assertEqual(pr_body["head"], "fix/pool")
         self.assertEqual(pr_body["base"], "main")
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_api_error_propagates(self, mock_api):
         """Errors from the API should propagate up."""
         mock_api.side_effect = RuntimeError("GitHub API failed (403): forbidden")
@@ -180,7 +187,7 @@ class TestCreatePullRequest(unittest.TestCase):
 class TestGetDefaultBranch(unittest.TestCase):
     """Test the get_default_branch() function."""
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_returns_branch_name(self, mock_api):
         mock_api.return_value = {"default_branch": "main"}
 
@@ -195,7 +202,7 @@ class TestGetDefaultBranch(unittest.TestCase):
 class TestGetRepoTree(unittest.TestCase):
     """Test the get_repo_tree() function (Contents API)."""
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_returns_entries(self, mock_api):
         mock_api.return_value = [
             {"name": "roles", "path": "roles", "type": "dir", "size": 0},
@@ -212,7 +219,7 @@ class TestGetRepoTree(unittest.TestCase):
             "ghp_tok", "GET", "/repos/cooperlees/clc_ansible/contents"
         )
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_with_subpath_and_ref(self, mock_api):
         mock_api.return_value = [
             {
@@ -234,7 +241,7 @@ class TestGetRepoTree(unittest.TestCase):
         )
         self.assertEqual(len(result), 1)
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_single_file_wrapped_in_list(self, mock_api):
         """Contents API returns a single object for a file, not a list."""
         mock_api.return_value = {
@@ -251,7 +258,7 @@ class TestGetRepoTree(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["name"], "main.yml")
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_error_propagates(self, mock_api):
         mock_api.side_effect = RuntimeError("404")
 
@@ -262,7 +269,7 @@ class TestGetRepoTree(unittest.TestCase):
 class TestGetFileContent(unittest.TestCase):
     """Test the get_file_content() function."""
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_base64_content(self, mock_api):
         import base64
 
@@ -281,7 +288,7 @@ class TestGetFileContent(unittest.TestCase):
             "/repos/cooperlees/clc_ansible/contents/roles/api/defaults/main.yml",
         )
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_non_base64_content(self, mock_api):
         mock_api.return_value = {"content": "raw text", "encoding": "none"}
 
@@ -295,7 +302,7 @@ class TestGetFileContent(unittest.TestCase):
 class TestFindOpenPrs(unittest.TestCase):
     """Test the find_open_prs() function."""
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_returns_matching_prs(self, mock_api):
         mock_api.return_value = {
             "total_count": 1,
@@ -323,7 +330,7 @@ class TestFindOpenPrs(unittest.TestCase):
         self.assertIn("is%3Aopen", call_path)
         self.assertIn("cooperlees/clc_ansible", call_path)
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_no_results(self, mock_api):
         mock_api.return_value = {"total_count": 0, "items": []}
 
@@ -338,7 +345,7 @@ class TestFindOpenPrs(unittest.TestCase):
         result = github.find_open_prs("ghp_tok", "cooperlees/clc_ansible", [])
         self.assertEqual(result, [])
 
-    @patch("github.api")
+    @patch("logmedic_common.github.api")
     def test_caps_search_terms_at_five(self, mock_api):
         mock_api.return_value = {"total_count": 0, "items": []}
 

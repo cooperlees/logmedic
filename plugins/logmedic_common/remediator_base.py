@@ -6,11 +6,11 @@ or GitHub API), PR creation with dedup, SSH execution, and JSON response
 parsing. Provider subclasses only supply API-key loading, model resolution,
 and the actual LLM HTTP call.
 
-``github.py`` lives in this directory too. Plugin modules add this directory
-to ``sys.path`` on import (see ``plugins/claude_remediator/``), so
-``import github`` and ``from remediator_base import ...`` resolve both under
-the daemon (which puts only the plugin's own directory on ``sys.path``) and
-when running unit tests from the plugin directory.
+``github.py`` lives in this package too. Provider plugins import
+``logmedic_common.remediator_base``; the daemon puts ``plugins/`` on
+``sys.path`` so the package binds by its unique name no matter what else is
+on the path (an installed PyGithub ``github`` package can no longer shadow
+the shared client).
 """
 
 import json
@@ -20,7 +20,7 @@ import subprocess
 
 # Re-exported so provider plugins (and their tests) can reference
 # ``<plugin_module>.github`` / ``<plugin_module>.subprocess`` for mocking.
-import github
+from logmedic_common import github
 
 __all__ = ["DEFAULT_MAX_TOKENS", "BaseRemediatorPlugin", "github", "subprocess"]
 
@@ -107,7 +107,9 @@ class BaseRemediatorPlugin:
         self._log.debug("parsed %d actions from response", len(actions))
 
         # Attach anomaly context to each valid action so execute() can embed
-        # it in PRs and check for duplicate PRs
+        # it in PRs and check for duplicate PRs. The key is `anomaly_context`
+        # (no leading underscore): the Rust bridge (src/plugin/python.rs)
+        # maps it into RemediationAction::context end-to-end.
         safe_actions = []
         for idx, action in enumerate(actions):
             if not isinstance(action, dict):
@@ -117,26 +119,39 @@ class BaseRemediatorPlugin:
                     type(action).__name__,
                 )
                 continue
-            action["_anomaly_context"] = anomalies
+            action["anomaly_context"] = anomalies
             safe_actions.append(action)
 
         return json.dumps(safe_actions)
 
     def execute(self, action_json: str) -> str:
-        """Execute a proposed remediation action."""
+        """Execute a proposed remediation action.
+
+        Mutating kinds (``pull_request``, ``ssh_command``) only run when
+        ``auto_execute`` is true; otherwise ``{"proposed": None}`` is returned
+        and the daemon records the action as still-proposed. ``report``
+        actions always apply (read-only).
+        """
         action = json.loads(action_json)
         kind = action.get("kind", {})
-        anomaly_context = action.get("_anomaly_context", [])
+        anomaly_context = action.get("anomaly_context", [])
         self._log.debug(
             "executing action: description=%s kind_keys=%s",
             action.get("description", "?"),
             list(kind.keys()),
         )
 
-        if "pull_request" in kind:
-            result = self._execute_pr(kind["pull_request"], anomaly_context)
-        elif "ssh_command" in kind:
-            if not self.enable_ssh:
+        if "pull_request" in kind or "ssh_command" in kind:
+            if not self.auto_execute:
+                self._log.info(
+                    "auto_execute is false: leaving %s action proposed (%s)",
+                    next(iter(kind)),
+                    action.get("description", "?"),
+                )
+                return json.dumps({"proposed": None})
+            if "pull_request" in kind:
+                result = self._execute_pr(kind["pull_request"], anomaly_context)
+            elif not self.enable_ssh:
                 self._log.warning("SSH action rejected: enable_ssh is false")
                 result = {
                     "failed": {
@@ -230,13 +245,16 @@ class BaseRemediatorPlugin:
                             break
                     else:
                         actions = [actions]
+            if not isinstance(actions, list):
+                # Valid JSON scalar (null, 42, "refused") — not an action list.
+                raise TypeError(f"expected JSON array, got {type(actions).__name__}")
             self._log.debug(
                 "successfully parsed %d actions from %s response",
                 len(actions),
                 self.provider_label,
             )
             return actions
-        except json.JSONDecodeError as e:
+        except (json.JSONDecodeError, TypeError) as e:
             self._log.error(
                 "failed to parse %s response as JSON: %s", self.provider_label, e
             )
@@ -274,10 +292,22 @@ class BaseRemediatorPlugin:
         Mirrors the GitHub-backed context (top-level listing plus up to 15
         small files from ``roles/*/{defaults,tasks,vars,templates}``) while
         skipping vault-encrypted and oversized files.
+
+        Symlink confinement: every candidate is resolved and rejected unless
+        it stays inside the resolved checkout, so a symlinked role/subdir or
+        file cannot exfiltrate content from elsewhere on disk to the LLM.
         """
-        base = os.path.expanduser(self.local_repo_path)
+        base = os.path.realpath(os.path.expanduser(self.local_repo_path))
         if not os.path.isdir(base):
             raise RuntimeError(f"local_repo_path is not a directory: {base}")
+
+        def _inside(path: str) -> str | None:
+            """Resolve *path* and return it iff it stays inside *base*."""
+            resolved = os.path.realpath(path)
+            if resolved == base or resolved.startswith(base + os.sep):
+                return resolved
+            self._log.warning("skipping path escaping local checkout: %s", path)
+            return None
 
         lines: list[str] = [
             f"Repository: {self.default_repo or base} (local checkout: {base})",
@@ -287,11 +317,13 @@ class BaseRemediatorPlugin:
         for name in sorted(os.listdir(base)):
             if name.startswith("."):
                 continue
-            full = os.path.join(base, name)
-            lines.append(f"  {name}/" if os.path.isdir(full) else f"  {name}")
+            resolved = _inside(os.path.join(base, name))
+            if resolved is None:
+                continue
+            lines.append(f"  {name}/" if os.path.isdir(resolved) else f"  {name}")
 
-        roles_dir = os.path.join(base, "roles")
-        if not os.path.isdir(roles_dir):
+        roles_dir = _inside(os.path.join(base, "roles"))
+        if roles_dir is None or not os.path.isdir(roles_dir):
             self._log.debug("no roles/ directory found, skipping file content fetch")
             return "\n".join(lines)
 
@@ -302,20 +334,20 @@ class BaseRemediatorPlugin:
         for role in sorted(os.listdir(roles_dir)):
             if files_fetched >= max_files:
                 break
-            role_dir = os.path.join(roles_dir, role)
-            if not os.path.isdir(role_dir):
+            role_dir = _inside(os.path.join(roles_dir, role))
+            if role_dir is None or not os.path.isdir(role_dir):
                 continue
             for sub in self._SAFE_ROLE_SUBDIRS:
                 if files_fetched >= max_files:
                     break
-                sub_dir = os.path.join(role_dir, sub)
-                if not os.path.isdir(sub_dir):
+                sub_dir = _inside(os.path.join(role_dir, sub))
+                if sub_dir is None or not os.path.isdir(sub_dir):
                     continue
                 for leaf in sorted(os.listdir(sub_dir)):
                     if files_fetched >= max_files:
                         break
-                    full_path = os.path.join(sub_dir, leaf)
-                    if not os.path.isfile(full_path):
+                    full_path = _inside(os.path.join(sub_dir, leaf))
+                    if full_path is None or not os.path.isfile(full_path):
                         continue
                     if os.path.getsize(full_path) > max_file_size:
                         self._log.debug("skipping large file %s", full_path)
@@ -585,12 +617,19 @@ class BaseRemediatorPlugin:
             self._log.error("missing host or commands for SSH execution")
             return {"failed": {"reason": "missing host or commands"}}
 
+        # `host` comes from model output: reject option-like values so a
+        # response such as "-oProxyCommand=..." cannot turn into an ssh flag
+        # executing a local command. `--` then seals the destination boundary.
+        if host.startswith("-"):
+            self._log.error("refusing option-like SSH host: %r", host)
+            return {"failed": {"reason": f"refusing option-like SSH host: {host!r}"}}
+
         self._log.debug("SSH executing on %s: %d commands", host, len(commands))
         try:
             ssh_args = ["ssh"]
             if self.ssh_key_path:
                 ssh_args.extend(["-i", self.ssh_key_path])
-            ssh_args.extend(["-o", "StrictHostKeyChecking=accept-new", host])
+            ssh_args.extend(["-o", "StrictHostKeyChecking=accept-new", "--", host])
 
             combined = " && ".join(commands)
             ssh_args.append(combined)

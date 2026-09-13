@@ -1,10 +1,17 @@
 """Tests for the Meta (Muse Spark) remediator plugin."""
 
+import os
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_THIS_DIR))  # plugins/ (logmedic_common)
+sys.path.insert(0, _THIS_DIR)  # own dir first: `import <plugin>` finds sibling
+
 import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from meta_remediator import (
+from meta_remediator.plugin import (
     DEFAULT_MAX_TOKENS,
     DEFAULT_MODEL,
     LATEST_ALIASES,
@@ -13,7 +20,10 @@ from meta_remediator import (
 
 
 def _make_settings(**overrides):
+    # Note: auto_execute=True — these tests cover the mutation path;
+    # the gated (default-false) behavior is tested in test_remediator_base.
     raw = {
+        "auto_execute": True,
         "meta_api_key": "meta-test-key",
         "model": "muse-spark-1.3-contributor",
         "default_repo": "cooperlees/clc_ansible",
@@ -200,7 +210,7 @@ class TestResolveModel(unittest.TestCase):
         ):
             self.assertEqual(plugin._resolve_model(), "muse-spark-1.3-contributor")
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_latest_alias_discovers(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = _models_list_response(
@@ -213,7 +223,7 @@ class TestResolveModel(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings(model="latest-contributor"))
         self.assertEqual(plugin._resolve_model(), "muse-spark-1.3-contributor")
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_discovery_failure_falls_back_to_default(self, mock_urlopen):
         from http.client import HTTPMessage
         from io import BytesIO
@@ -231,7 +241,7 @@ class TestResolveModel(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings(model="latest-contributor"))
         self.assertEqual(plugin._resolve_model(), DEFAULT_MODEL)
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_auto_latest_flag_overrides_pinned(self, mock_urlopen):
         resp = MagicMock()
         resp.read.return_value = _models_list_response(
@@ -258,7 +268,7 @@ class TestPropose(unittest.TestCase):
         result = plugin.propose("[]")
         self.assertEqual(json.loads(result), [])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_pr_action(self, mock_urlopen):
         """Model returns a PR-based remediation action."""
         resp = MagicMock()
@@ -282,7 +292,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(pr["files_changed"]), 1)
         self.assertIn("db_pool_size", pr["files_changed"][0]["content"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_report_action(self, mock_urlopen):
         """Model returns a report-only action (no automated fix)."""
         resp = MagicMock()
@@ -297,7 +307,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("report", result[0]["kind"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_sends_correct_request(self, mock_urlopen):
         """Verify the API request has correct URL, headers and payload shape."""
         resp = MagicMock()
@@ -330,7 +340,7 @@ class TestPropose(unittest.TestCase):
         self.assertIn("connection refused", payload["messages"][1]["content"])
         self.assertIn("150", payload["messages"][1]["content"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_warns_on_length_truncation(self, mock_urlopen):
         """A warning is logged when the response is truncated (finish=length)."""
         resp = MagicMock()
@@ -352,7 +362,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["description"], "Meta response parsing failed")
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_handles_markdown_fenced_response(self, mock_urlopen):
         """Model sometimes wraps JSON in markdown code fences."""
         fenced = "```json\n" + json.dumps([REPORT_ACTION]) + "\n```"
@@ -368,7 +378,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("report", result[0]["kind"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_single_object_wrapped_in_list(self, mock_urlopen):
         """json_object mode can return a single object instead of an array."""
         resp = MagicMock()
@@ -383,7 +393,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("report", result[0]["kind"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_envelope_object_unwrapped(self, mock_urlopen):
         """json_object mode can wrap the array in a {"response": [...]} envelope."""
         resp = MagicMock()
@@ -401,7 +411,7 @@ class TestPropose(unittest.TestCase):
         self.assertIn("pull_request", result[0]["kind"])
         self.assertIn("report", result[1]["kind"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_invalid_json_fallback(self, mock_urlopen):
         """If the model returns non-JSON, plugin wraps it in a report action."""
         resp = MagicMock()
@@ -419,7 +429,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(result[0]["description"], "Meta response parsing failed")
         self.assertIn("report", result[0]["kind"])
 
-    @patch("meta_remediator.urlopen")
+    @patch("meta_remediator.plugin.urlopen")
     def test_propose_http_error_includes_body(self, mock_urlopen):
         """HTTP errors from the Meta API should include the response body."""
         from http.client import HTTPMessage
@@ -447,7 +457,7 @@ class TestPropose(unittest.TestCase):
 class TestExecute(unittest.TestCase):
     """Test the execute() method which carries out proposed actions."""
 
-    @patch("meta_remediator.github.create_pull_request")
+    @patch("meta_remediator.plugin.github.create_pull_request")
     def test_execute_pr(self, mock_create_pr):
         """PR execution should call github.create_pull_request."""
         mock_create_pr.return_value = {
@@ -474,7 +484,7 @@ class TestExecute(unittest.TestCase):
             files=PR_DATA["files_changed"],
         )
 
-    @patch("meta_remediator.github.create_pull_request")
+    @patch("meta_remediator.plugin.github.create_pull_request")
     def test_execute_pr_api_failure(self, mock_create_pr):
         """GitHub API error should return failed status."""
         mock_create_pr.side_effect = RuntimeError(
@@ -504,7 +514,7 @@ class TestExecute(unittest.TestCase):
 
         self.assertIn("applied", result)
 
-    @patch("meta_remediator.subprocess.run")
+    @patch("meta_remediator.plugin.subprocess.run")
     def test_execute_ssh(self, mock_run):
         """SSH execution should call ssh with the right host and commands."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -527,11 +537,13 @@ class TestExecute(unittest.TestCase):
         self.assertIn("applied", result)
         call_args = mock_run.call_args[0][0]
         self.assertIn("ssh", call_args)
+        self.assertIn("--", call_args)
+        self.assertLess(call_args.index("--"), call_args.index("web-1.prod"))
         self.assertIn("web-1.prod", call_args)
         self.assertIn("-i", call_args)
         self.assertIn("/tmp/test_key", call_args)
 
-    @patch("meta_remediator.subprocess.run")
+    @patch("meta_remediator.plugin.subprocess.run")
     def test_execute_ssh_failure(self, mock_run):
         """SSH command failure should return failed status."""
         mock_run.return_value = MagicMock(
@@ -553,7 +565,7 @@ class TestExecute(unittest.TestCase):
 
     def test_execute_ssh_disabled_by_default(self):
         """SSH actions should be rejected when enable_ssh is false (default)."""
-        plugin = RemediatorPlugin(_make_settings())
+        plugin = RemediatorPlugin(_make_settings(auto_execute=True))
         action = {
             "description": "restart",
             "kind": {
@@ -565,6 +577,23 @@ class TestExecute(unittest.TestCase):
 
         self.assertIn("failed", result)
         self.assertIn("disabled", result["failed"]["reason"])
+
+    def test_execute_ssh_rejects_option_like_host(self):
+        """Model-returned '-oProxyCommand=...' must not become an ssh flag."""
+        plugin = RemediatorPlugin(_make_settings(enable_ssh=True))
+        action = {
+            "description": "evil",
+            "kind": {
+                "ssh_command": {
+                    "host": "-oProxyCommand=touch /tmp/pwned",
+                    "commands": ["uptime"],
+                }
+            },
+            "status": "proposed",
+        }
+        result = json.loads(plugin.execute(json.dumps(action)))
+        self.assertIn("failed", result)
+        self.assertIn("option-like", result["failed"]["reason"])
 
     def test_execute_no_repo(self):
         """PR with no repo specified → failure."""
@@ -640,7 +669,7 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("api-server", prompt)
         self.assertIn("Anomaly 1", prompt)
 
-    @patch("meta_remediator.github.create_pull_request")
+    @patch("meta_remediator.plugin.github.create_pull_request")
     def test_execute_pr_overrides_wrong_repo(self, mock_create_pr):
         """When default_repo is set, ignore the model's hallucinated repo name."""
         mock_create_pr.return_value = {
@@ -714,6 +743,54 @@ class TestFetchLocalRepoContext(unittest.TestCase):
             self.assertIn("worker_connections", result)
             self.assertIn("install nginx", result)
             self.assertNotIn("hunter2", result)
+
+    def test_symlink_escape_rejected(self):
+        """A symlinked role dir pointing outside the checkout is skipped."""
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            outside = os.path.join(tmp, "outside")
+            os.makedirs(outside)
+            with open(os.path.join(outside, "secret.txt"), "w") as f:
+                f.write("TOP-SECRET-OUTSIDE-CHECKOUT\n")
+
+            checkout = os.path.join(tmp, "checkout")
+            os.makedirs(os.path.join(checkout, "roles"))
+            os.symlink(outside, os.path.join(checkout, "roles", "evil"))
+            # roles/evil -> outside: traversal must not enter it
+            plugin = RemediatorPlugin(
+                _make_settings(
+                    default_repo="cooperlees/clc_ansible", local_repo_path=checkout
+                )
+            )
+            with self.assertLogs("logmedic.meta_remediator", level="WARNING") as cm:
+                result = plugin._fetch_repo_context()
+            self.assertNotIn("TOP-SECRET", result)
+            self.assertTrue(
+                any("escaping local checkout" in m for m in cm.output),
+                f"expected escape warning, got: {cm.output}",
+            )
+
+    def test_symlink_file_escape_rejected(self):
+        """A symlinked file inside tasks/ pointing outside is skipped."""
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "secret.txt"), "w") as f:
+                f.write("FILE-SECRET-OUTSIDE\n")
+            checkout = os.path.join(tmp, "checkout")
+            tasks = os.path.join(checkout, "roles", "app", "tasks")
+            os.makedirs(tasks)
+            with open(os.path.join(tasks, "ok.yml"), "w") as f:
+                f.write("- name: ok\n")
+            os.symlink(os.path.join(tmp, "secret.txt"), os.path.join(tasks, "evil.yml"))
+
+            plugin = RemediatorPlugin(_make_settings(local_repo_path=checkout))
+            result = plugin._fetch_repo_context()
+            self.assertNotIn("FILE-SECRET", result)
+            self.assertIn("- name: ok", result)
 
     def test_missing_dir_returns_empty(self):
         plugin = RemediatorPlugin(

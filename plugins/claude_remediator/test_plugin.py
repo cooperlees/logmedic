@@ -1,14 +1,24 @@
 """Tests for the Claude remediator plugin."""
 
+import os
+import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(_THIS_DIR))  # plugins/ (logmedic_common)
+sys.path.insert(0, _THIS_DIR)  # own dir first: `import <plugin>` finds sibling
+
 import json
 import unittest
 from unittest.mock import MagicMock, patch
 
-from claude_remediator import DEFAULT_MAX_TOKENS, RemediatorPlugin
+from claude_remediator.plugin import DEFAULT_MAX_TOKENS, RemediatorPlugin
 
 
 def _make_settings(**overrides):
+    # Note: auto_execute=True — these tests cover the mutation path;
+    # the gated (default-false) behavior is tested in test_remediator_base.
     raw = {
+        "auto_execute": True,
         "anthropic_api_key": "sk-ant-test-key",
         "model": "claude-opus-4-6",
         "default_repo": "cooperlees/clc_ansible",
@@ -118,7 +128,7 @@ class TestPropose(unittest.TestCase):
         result = plugin.propose("[]")
         self.assertEqual(json.loads(result), [])
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_pr_action(self, mock_urlopen):
         """Claude returns a PR-based remediation action."""
         resp = MagicMock()
@@ -142,7 +152,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(pr["files_changed"]), 1)
         self.assertIn("db_pool_size", pr["files_changed"][0]["content"])
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_report_action(self, mock_urlopen):
         """Claude returns a report-only action (no automated fix)."""
         resp = MagicMock()
@@ -157,7 +167,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("report", result[0]["kind"])
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_sends_correct_request(self, mock_urlopen):
         """Verify the API request has correct headers and payload shape."""
         resp = MagicMock()
@@ -189,7 +199,7 @@ class TestPropose(unittest.TestCase):
         self.assertIn("connection refused", user_content)
         self.assertIn("150", user_content)
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_uses_custom_max_tokens(self, mock_urlopen):
         """Custom max_tokens setting is sent to the Claude API."""
         resp = MagicMock()
@@ -205,7 +215,7 @@ class TestPropose(unittest.TestCase):
         payload = json.loads(req.data)
         self.assertEqual(payload["max_tokens"], 8192)
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_warns_on_max_tokens_truncation(self, mock_urlopen):
         """A warning is logged when Claude's response is truncated."""
         # Return truncated JSON that will fail to parse
@@ -230,7 +240,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]["description"], "Claude response parsing failed")
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_handles_markdown_fenced_response(self, mock_urlopen):
         """Claude sometimes wraps JSON in markdown code fences."""
         fenced = "```json\n" + json.dumps([REPORT_ACTION]) + "\n```"
@@ -246,7 +256,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(len(result), 1)
         self.assertIn("report", result[0]["kind"])
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_invalid_json_fallback(self, mock_urlopen):
         """If Claude returns non-JSON, plugin wraps it in a report action."""
         resp = MagicMock()
@@ -264,7 +274,7 @@ class TestPropose(unittest.TestCase):
         self.assertEqual(result[0]["description"], "Claude response parsing failed")
         self.assertIn("report", result[0]["kind"])
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_multiple_actions(self, mock_urlopen):
         """Claude can return multiple actions for one set of anomalies."""
         actions = [PR_ACTION, REPORT_ACTION]
@@ -279,7 +289,7 @@ class TestPropose(unittest.TestCase):
 
         self.assertEqual(len(result), 2)
 
-    @patch("claude_remediator.urlopen")
+    @patch("claude_remediator.plugin.urlopen")
     def test_propose_http_error_includes_body(self, mock_urlopen):
         """HTTP errors from the Claude API should include the response body."""
         from http.client import HTTPMessage
@@ -307,7 +317,7 @@ class TestPropose(unittest.TestCase):
 class TestExecute(unittest.TestCase):
     """Test the execute() method which carries out proposed actions."""
 
-    @patch("claude_remediator.github.create_pull_request")
+    @patch("claude_remediator.plugin.github.create_pull_request")
     def test_execute_pr(self, mock_create_pr):
         """PR execution should call github.create_pull_request."""
         mock_create_pr.return_value = {
@@ -335,7 +345,7 @@ class TestExecute(unittest.TestCase):
             files=PR_DATA["files_changed"],
         )
 
-    @patch("claude_remediator.github.create_pull_request")
+    @patch("claude_remediator.plugin.github.create_pull_request")
     def test_execute_pr_api_failure(self, mock_create_pr):
         """GitHub API error should return failed status."""
         mock_create_pr.side_effect = RuntimeError(
@@ -365,7 +375,7 @@ class TestExecute(unittest.TestCase):
 
         self.assertIn("applied", result)
 
-    @patch("claude_remediator.subprocess.run")
+    @patch("claude_remediator.plugin.subprocess.run")
     def test_execute_ssh(self, mock_run):
         """SSH execution should call ssh with the right host and commands."""
         mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
@@ -388,11 +398,13 @@ class TestExecute(unittest.TestCase):
         self.assertIn("applied", result)
         call_args = mock_run.call_args[0][0]
         self.assertIn("ssh", call_args)
+        self.assertIn("--", call_args)
+        self.assertLess(call_args.index("--"), call_args.index("web-1.prod"))
         self.assertIn("web-1.prod", call_args)
         self.assertIn("-i", call_args)
         self.assertIn("/tmp/test_key", call_args)
 
-    @patch("claude_remediator.subprocess.run")
+    @patch("claude_remediator.plugin.subprocess.run")
     def test_execute_ssh_failure(self, mock_run):
         """SSH command failure should return failed status."""
         mock_run.return_value = MagicMock(
@@ -414,7 +426,7 @@ class TestExecute(unittest.TestCase):
 
     def test_execute_ssh_disabled_by_default(self):
         """SSH actions should be rejected when enable_ssh is false (default)."""
-        plugin = RemediatorPlugin(_make_settings())
+        plugin = RemediatorPlugin(_make_settings(auto_execute=True))
         action = {
             "description": "restart",
             "kind": {
@@ -469,6 +481,23 @@ class TestExecute(unittest.TestCase):
         self.assertIn("failed", result)
         self.assertIn("unknown", result["failed"]["reason"])
 
+    def test_execute_ssh_rejects_option_like_host(self):
+        """Model-returned '-oProxyCommand=...' must not become an ssh flag."""
+        plugin = RemediatorPlugin(_make_settings(enable_ssh=True))
+        action = {
+            "description": "evil",
+            "kind": {
+                "ssh_command": {
+                    "host": "-oProxyCommand=touch /tmp/pwned",
+                    "commands": ["uptime"],
+                }
+            },
+            "status": "proposed",
+        }
+        result = json.loads(plugin.execute(json.dumps(action)))
+        self.assertIn("failed", result)
+        self.assertIn("option-like", result["failed"]["reason"])
+
     def test_execute_ssh_missing_host(self):
         """SSH with no host → failure."""
         plugin = RemediatorPlugin(_make_settings(enable_ssh=True))
@@ -522,7 +551,7 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("api-server", prompt)
         self.assertIn("Anomaly 1", prompt)
 
-    @patch("claude_remediator.github.create_pull_request")
+    @patch("claude_remediator.plugin.github.create_pull_request")
     def test_execute_pr_overrides_wrong_repo(self, mock_create_pr):
         """When default_repo is set, ignore Claude's hallucinated repo name."""
         mock_create_pr.return_value = {

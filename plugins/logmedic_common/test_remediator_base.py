@@ -1,4 +1,4 @@
-"""Shared-flow tests for plugins/common/remediator_base.py.
+"""Shared-flow tests for plugins/logmedic_common/remediator_base.py.
 
 Exercises the provider-agnostic base (prompt building, repo-context
 fetching, PR dedup + log context, anomaly-context attachment) through a
@@ -12,9 +12,11 @@ import sys
 import unittest
 from unittest.mock import patch
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(  # plugins/ (logmedic_common package)
+    0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+)
 
-from remediator_base import BaseRemediatorPlugin
+from logmedic_common.remediator_base import BaseRemediatorPlugin
 
 
 def _make_settings(**overrides):
@@ -129,6 +131,77 @@ class TestParseResponse(unittest.TestCase):
         self.assertEqual(result[0]["description"], "Test response parsing failed")
         self.assertIn("report", result[0]["kind"])
 
+    def test_json_scalars_fallback(self):
+        """Valid JSON non-arrays (null/42/string) degrade to a report."""
+        plugin = RemediatorPlugin(_make_settings())
+        for raw in ("null", "42", '"just refused"'):
+            result = plugin._parse_response(raw)
+            self.assertEqual(len(result), 1, raw)
+            self.assertIn("report", result[0]["kind"])
+
+
+class TestAutoExecuteGate(unittest.TestCase):
+    """Mutating kinds require auto_execute=true; reports always apply."""
+
+    def test_pr_gated_when_auto_execute_false(self):
+        plugin = RemediatorPlugin(_make_settings(auto_execute=False))
+        action = {
+            "description": "test",
+            "kind": PR_ACTION["kind"],
+            "status": "proposed",
+        }
+        with patch.object(
+            RemediatorPlugin, "_execute_pr", side_effect=AssertionError("must not run")
+        ):
+            result = json.loads(plugin.execute(json.dumps(action)))
+        # Deserializes to ActionStatus::Proposed on the Rust side.
+        self.assertEqual(result, {"proposed": None})
+
+    def test_ssh_gated_when_auto_execute_false(self):
+        plugin = RemediatorPlugin(_make_settings(auto_execute=False))
+        action = {
+            "description": "restart",
+            "kind": {"ssh_command": {"host": "web-1", "commands": ["uptime"]}},
+            "status": "proposed",
+        }
+        with patch.object(
+            RemediatorPlugin, "_execute_ssh", side_effect=AssertionError("must not run")
+        ):
+            result = json.loads(plugin.execute(json.dumps(action)))
+        self.assertEqual(result, {"proposed": None})
+
+    def test_pr_runs_when_auto_execute_true(self):
+        plugin = RemediatorPlugin(
+            _make_settings(auto_execute=True, github_token="ghp_test")
+        )
+        action = {
+            "description": "test",
+            "kind": PR_ACTION["kind"],
+            "status": "proposed",
+        }
+        with (
+            patch.object(
+                RemediatorPlugin, "_execute_pr", return_value={"applied": None}
+            ) as mock_pr,
+            patch(
+                "logmedic_common.remediator_base.github.find_open_prs", return_value=[]
+            ),
+        ):
+            result = json.loads(plugin.execute(json.dumps(action)))
+        self.assertIn("applied", result)
+        mock_pr.assert_called_once()
+
+    def test_report_always_applies(self):
+        for auto_execute in (False, True):
+            plugin = RemediatorPlugin(_make_settings(auto_execute=auto_execute))
+            action = {
+                "description": "test",
+                "kind": REPORT_ACTION["kind"],
+                "status": "proposed",
+            }
+            result = json.loads(plugin.execute(json.dumps(action)))
+            self.assertIn("applied", result)
+
 
 class TestSharedProposeExecute(unittest.TestCase):
     """End-to-end propose()/execute() through the fake LLM."""
@@ -140,7 +213,7 @@ class TestSharedProposeExecute(unittest.TestCase):
         with patch.object(RemediatorPlugin, "_fetch_repo_context", return_value=""):
             result = json.loads(plugin.propose(_anomalies_json(SAMPLE_ANOMALIES)))
         self.assertEqual(len(result), 1)
-        self.assertIn("_anomaly_context", result[0])
+        self.assertIn("anomaly_context", result[0])
         status = json.loads(plugin.execute(json.dumps(result[0])))
         self.assertIn("applied", status)
 
@@ -148,13 +221,29 @@ class TestSharedProposeExecute(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings())
         self.assertEqual(json.loads(plugin.propose("[]")), [])
 
+    def test_propose_emits_rust_bridge_key(self):
+        """propose() output uses `anomaly_context` so src/plugin/python.rs
+        maps it into RemediationAction::context (underscore-prefixed keys
+        would be dropped at the boundary)."""
+        plugin = RemediatorPlugin(_make_settings())
+        with patch.object(RemediatorPlugin, "_fetch_repo_context", return_value=""):
+            result = json.loads(plugin.propose(_anomalies_json(SAMPLE_ANOMALIES)))
+        self.assertIn("anomaly_context", result[0])
+        self.assertNotIn("_anomaly_context", result[0])
+        # The attached value deserializes as Vec<LogAnomaly>-shaped dicts.
+        ctx = result[0]["anomaly_context"]
+        self.assertEqual(ctx[0]["pattern"], SAMPLE_ANOMALIES[0]["pattern"])
+        self.assertEqual(ctx[0]["count"], 150)
+
 
 class TestFetchRepoContext(unittest.TestCase):
     """Test _fetch_repo_context() which fetches files from the default repo."""
 
-    @patch("remediator_base.github.get_file_content")
-    @patch("remediator_base.github.get_repo_tree")
-    @patch("remediator_base.github.get_default_branch", return_value="main")
+    @patch("logmedic_common.remediator_base.github.get_file_content")
+    @patch("logmedic_common.remediator_base.github.get_repo_tree")
+    @patch(
+        "logmedic_common.remediator_base.github.get_default_branch", return_value="main"
+    )
     def test_fetches_repo_tree_and_files(self, _mock_branch, mock_tree, mock_content):
         # Contents API returns "name", "type"="dir"/"file", "path", "size"
         mock_tree.side_effect = [
@@ -226,16 +315,18 @@ class TestFetchRepoContext(unittest.TestCase):
         plugin = RemediatorPlugin(_make_settings(github_token=""))
         self.assertEqual(plugin._fetch_repo_context(), "")
 
-    @patch("remediator_base.github.get_default_branch")
+    @patch("logmedic_common.remediator_base.github.get_default_branch")
     def test_handles_api_error_gracefully(self, mock_branch):
         mock_branch.side_effect = RuntimeError("403 forbidden")
         plugin = RemediatorPlugin(_make_settings(github_token="ghp_test"))
         result = plugin._fetch_repo_context()
         self.assertEqual(result, "")
 
-    @patch("remediator_base.github.get_file_content")
-    @patch("remediator_base.github.get_repo_tree")
-    @patch("remediator_base.github.get_default_branch", return_value="main")
+    @patch("logmedic_common.remediator_base.github.get_file_content")
+    @patch("logmedic_common.remediator_base.github.get_repo_tree")
+    @patch(
+        "logmedic_common.remediator_base.github.get_default_branch", return_value="main"
+    )
     def test_skips_vault_encrypted_files(self, _mock_branch, mock_tree, mock_content):
         mock_tree.side_effect = [
             # top-level
@@ -263,9 +354,11 @@ class TestFetchRepoContext(unittest.TestCase):
         self.assertNotIn("ANSIBLE_VAULT", result)
         self.assertNotIn("6162636465660a", result)
 
-    @patch("remediator_base.github.get_file_content")
-    @patch("remediator_base.github.get_repo_tree")
-    @patch("remediator_base.github.get_default_branch", return_value="main")
+    @patch("logmedic_common.remediator_base.github.get_file_content")
+    @patch("logmedic_common.remediator_base.github.get_repo_tree")
+    @patch(
+        "logmedic_common.remediator_base.github.get_default_branch", return_value="main"
+    )
     def test_skips_large_files_by_size(self, _mock_branch, mock_tree, mock_content):
         mock_tree.side_effect = [
             # top-level
@@ -306,8 +399,10 @@ class TestFetchRepoContext(unittest.TestCase):
         self.assertIn("pool_size", result)
         self.assertEqual(mock_content.call_count, 1)
 
-    @patch("remediator_base.github.get_repo_tree")
-    @patch("remediator_base.github.get_default_branch", return_value="main")
+    @patch("logmedic_common.remediator_base.github.get_repo_tree")
+    @patch(
+        "logmedic_common.remediator_base.github.get_default_branch", return_value="main"
+    )
     def test_does_not_fetch_group_vars_or_inventory(self, _mock_branch, mock_tree):
         """Directories that commonly contain secrets are not traversed."""
         mock_tree.return_value = [
@@ -342,8 +437,8 @@ class TestBuildAnomalySection(unittest.TestCase):
 class TestPrDedup(unittest.TestCase):
     """Test that _execute_pr() checks for existing open PRs."""
 
-    @patch("remediator_base.github.find_open_prs")
-    @patch("remediator_base.github.create_pull_request")
+    @patch("logmedic_common.remediator_base.github.find_open_prs")
+    @patch("logmedic_common.remediator_base.github.create_pull_request")
     def test_skips_when_existing_pr_found(self, mock_create, mock_find):
         mock_find.return_value = [
             {
@@ -365,8 +460,8 @@ class TestPrDedup(unittest.TestCase):
         self.assertIn("pull/99", result["reason"])
         mock_create.assert_not_called()
 
-    @patch("remediator_base.github.find_open_prs")
-    @patch("remediator_base.github.create_pull_request")
+    @patch("logmedic_common.remediator_base.github.find_open_prs")
+    @patch("logmedic_common.remediator_base.github.create_pull_request")
     def test_creates_pr_when_no_existing(self, mock_create, mock_find):
         mock_find.return_value = []
         mock_create.return_value = {
@@ -384,8 +479,8 @@ class TestPrDedup(unittest.TestCase):
         self.assertNotIn("skipped", result)
         mock_create.assert_called_once()
 
-    @patch("remediator_base.github.find_open_prs")
-    @patch("remediator_base.github.create_pull_request")
+    @patch("logmedic_common.remediator_base.github.find_open_prs")
+    @patch("logmedic_common.remediator_base.github.create_pull_request")
     def test_dedup_error_proceeds_with_creation(self, mock_create, mock_find):
         """If the dedup search fails, we still try to create the PR."""
         mock_find.side_effect = RuntimeError("search API error")
@@ -407,8 +502,8 @@ class TestPrDedup(unittest.TestCase):
 class TestPrLogContext(unittest.TestCase):
     """Test that PR body includes triggering log line context."""
 
-    @patch("remediator_base.github.find_open_prs")
-    @patch("remediator_base.github.create_pull_request")
+    @patch("logmedic_common.remediator_base.github.find_open_prs")
+    @patch("logmedic_common.remediator_base.github.create_pull_request")
     def test_pr_body_includes_anomaly_section(self, mock_create, mock_find):
         mock_find.return_value = []
         mock_create.return_value = {
@@ -429,7 +524,7 @@ class TestPrLogContext(unittest.TestCase):
         self.assertIn("connection refused", body)
         self.assertIn("150 occurrences", body)
 
-    @patch("remediator_base.github.create_pull_request")
+    @patch("logmedic_common.remediator_base.github.create_pull_request")
     def test_pr_body_unchanged_without_anomalies(self, mock_create):
         mock_create.return_value = {
             "html_url": "https://github.com/cooperlees/clc_ansible/pull/51",
@@ -453,10 +548,10 @@ class TestProposeAttachesContext(unittest.TestCase):
         result = json.loads(plugin.propose(_anomalies_json(SAMPLE_ANOMALIES)))
 
         self.assertEqual(len(result), 1)
-        self.assertIn("_anomaly_context", result[0])
-        self.assertEqual(len(result[0]["_anomaly_context"]), 1)
+        self.assertIn("anomaly_context", result[0])
+        self.assertEqual(len(result[0]["anomaly_context"]), 1)
         self.assertEqual(
-            result[0]["_anomaly_context"][0]["pattern"], SAMPLE_ANOMALIES[0]["pattern"]
+            result[0]["anomaly_context"][0]["pattern"], SAMPLE_ANOMALIES[0]["pattern"]
         )
 
 
